@@ -31,6 +31,7 @@ ESP8266WebServer server(80);
 
 // ---------------- MOTOR STATE ----------------------
 int motorSpeed = 170;
+int controlSensitivity = 3; // 1 to 5
 char currentCommand = 'S';
 
 bool moving = false;
@@ -154,8 +155,7 @@ void handleSpeed() {
   }
 
   for (unsigned int i = 0; i < value.length(); i++) {
-    if (value.charAt(i) < '0' ||
-        value.charAt(i) > '9') {
+    if (value.charAt(i) < '0' || value.charAt(i) > '9') {
       server.send(400, "text/plain", "Invalid speed");
       return;
     }
@@ -172,6 +172,21 @@ void handleSpeed() {
   applyCommand();
 
   server.send(200, "text/plain", "Speed updated");
+}
+
+// ---------------- SENSITIVITY HANDLER --------------
+void handleSensitivity() {
+  if (!server.hasArg("s")) {
+    server.send(400, "text/plain", "Missing sensitivity");
+    return;
+  }
+  int sens = server.arg("s").toInt();
+  if (sens >= 1 && sens <= 5) {
+    controlSensitivity = sens;
+    server.send(200, "text/plain", "Sensitivity updated");
+  } else {
+    server.send(400, "text/plain", "Invalid sensitivity");
+  }
 }
 
 // ---------------- WEBPAGE (HTML + CSS + JS) --------
@@ -641,7 +656,7 @@ button {cursor:pointer}
     </section>
 
     <div class="footer">
-      Hold Forward/Backward + Tap Left/Right to steer
+      Hold Forward/Backward + Slide or Tap Left/Right to steer
     </div>
 
   </div>
@@ -660,7 +675,7 @@ button {cursor:pointer}
       <option value="dark">Midnight Dark</option>
     </select>
 
-    <label for="sensitivitySlider">Sensitivity / Responsiveness</label>
+    <label for="sensitivitySlider">Sensitivity (1-5)</label>
     <input type="range" id="sensitivitySlider" min="1" max="5" value="3">
 
     <button type="button" class="close-modal" id="closeSettings">Save & Close</button>
@@ -691,11 +706,16 @@ themeSelect.addEventListener('change', (e) => {
   localStorage.setItem('robocytic_theme', theme);
 });
 
-// Load saved theme
+// Load saved theme & sensitivity
 const savedTheme = localStorage.getItem('robocytic_theme');
 if (savedTheme) {
   themeSelect.value = savedTheme;
   if (savedTheme !== 'blue') document.documentElement.setAttribute('data-theme', savedTheme);
+}
+
+const savedSens = localStorage.getItem('robocytic_sens');
+if (savedSens) {
+  sensitivitySlider.value = savedSens;
 }
 
 const btnMap = {
@@ -755,11 +775,14 @@ function sendSpeed(value) {
     .catch(() => { if (generation === commandGeneration) setStatus('error', 'SPEED ERROR'); });
 }
 
+function sendSensitivity(val) {
+  enqueueRequest('/sensitivity?s=' + val).catch(() => {});
+}
+
 function startHeartbeat() {
   if (heartbeat !== null) return;
   const sensitivity = parseInt(sensitivitySlider.value) || 3;
-  // Interval adjusts based on sensitivity slider (faster heartbeat for higher sensitivity)
-  const interval = Math.max(150, 350 - (sensitivity * 40));
+  const interval = Math.max(120, 320 - (sensitivity * 45));
 
   heartbeat = setInterval(() => {
     if (activeCommand !== 'S') sendCommand(activeCommand);
@@ -809,17 +832,34 @@ function stopAll() {
   sendCommand('S');
 }
 
+// Full Slide-Between-Buttons Support via Touchmove tracking across all active fingers
+function handleTouchMove(event) {
+  event.preventDefault();
+  buttonState.F = false;
+  buttonState.B = false;
+  buttonState.L = false;
+  buttonState.R = false;
+
+  for (let i = 0; i < event.touches.length; i++) {
+    const t = event.touches[i];
+    const el = document.elementFromPoint(t.clientX, t.clientY);
+    if (el) {
+      const btn = el.closest('[data-c]');
+      if (btn && btn.dataset.c) {
+        buttonState[btn.dataset.c] = true;
+      }
+    }
+  }
+  evaluateButtons();
+}
+
 ['F', 'B', 'L', 'R'].forEach(dir => {
   const btn = btnMap[dir];
-  const handleTouch = event => {
-    event.preventDefault();
-    buttonState[dir] = event.targetTouches.length > 0;
-    evaluateButtons();
-  };
 
-  btn.addEventListener('touchstart', handleTouch, { passive: false });
-  btn.addEventListener('touchend', handleTouch, { passive: false });
-  btn.addEventListener('touchcancel', handleTouch, { passive: false });
+  btn.addEventListener('touchstart', handleTouchMove, { passive: false });
+  btn.addEventListener('touchmove', handleTouchMove, { passive: false });
+  btn.addEventListener('touchend', handleTouchMove, { passive: false });
+  btn.addEventListener('touchcancel', handleTouchMove, { passive: false });
 
   btn.addEventListener('mousedown', event => {
     event.preventDefault();
@@ -833,6 +873,16 @@ function stopAll() {
 
 window.addEventListener('touchend', event => {
   if (event.touches && event.touches.length === 0 && activeCommand !== 'S') stopAll();
+});
+
+sensitivitySlider.addEventListener('input', (e) => {
+  const val = e.target.value;
+  localStorage.setItem('robocytic_sens', val);
+  sendSensitivity(val);
+  if (heartbeat !== null) {
+    stopHeartbeat();
+    startHeartbeat();
+  }
 });
 
 const keyToDir = { ArrowUp: 'F', KeyW: 'F', ArrowDown: 'B', KeyS: 'B', ArrowLeft: 'L', KeyA: 'L', ArrowRight: 'R', KeyD: 'R' };
@@ -916,6 +966,7 @@ void setup() {
 
   server.on("/cmd", HTTP_GET, handleCommand);
   server.on("/speed", HTTP_GET, handleSpeed);
+  server.on("/sensitivity", HTTP_GET, handleSensitivity);
 
   server.onNotFound([]() {
     server.send(404, "text/plain", "Not found");
