@@ -7,7 +7,7 @@
 // ENA -> D7 / GPIO13
 // IN1 -> D1 / GPIO5
 // IN2 -> D2 / GPIO4
-// ENB -> D8 / GPIO15 (remove ENB jumper)
+// ENB -> D8 / GPIO15 (remove ENB jumper; GPIO15 must be LOW at boot)
 // IN3 -> D5 / GPIO14
 // IN4 -> D6 / GPIO12
 //
@@ -15,10 +15,9 @@
 // - Connect ESP8266 GND to L298N GND.
 // - Power motors from a suitable motor supply.
 // - Do not power motors directly from the ESP8266.
+// - Add a 470-1000 uF capacitor near the ESP8266 supply to avoid brownouts.
+// - Optional: 10k pull-down resistors on ENA/ENB stop twitching at power-up.
 // - Lift the wheels before testing.
-//
-// Wi-Fi: OLL_RoboRacer
-// Password: robostudios@121321##@@
 
 #define ENA 13
 #define IN1 5
@@ -27,21 +26,54 @@
 #define IN3 14
 #define IN4 12
 
+// ---- Wi-Fi credentials -------------------------------
+// Change the password (min. 8 characters) before flashing.
+// Do not paste real credentials into shared code.
 const char* ssid = "OLL_RoboRacer";
 const char* password = "robostudios@121321##@@";
 
+const uint8_t WIFI_CHANNEL = 1;
+const uint8_t WIFI_MAX_CLIENTS = 2;
+
+// ---- Motor tuning ------------------------------------
+// Smallest PWM that actually turns your motors (typically 60-100).
+// Any non-zero command is mapped into MIN_PWM..255.
+// 0 = no deadband compensation.
+const int MIN_PWM = 0;
+
+const unsigned long FAILSAFE_MS = 1200;
+
 ESP8266WebServer server(80);
 
-int motorSpeed = 170;
 int currentLeft = 0;
 int currentRight = 0;
-
 unsigned long lastCommandTime = 0;
-const unsigned long FAILSAFE_MS = 1200;
 
 // ======================================================
 // MOTOR CONTROL
 // ======================================================
+
+static inline int signOf(int v) {
+  return (v > 0) - (v < 0);
+}
+
+static int toPwm(int value) {
+  int mag = abs(value);
+  if (mag == 0) return 0;
+  if (MIN_PWM <= 0) return mag;
+  return map(mag, 1, 255, MIN_PWM, 255);
+}
+
+// Direction pins are only touched when direction changes,
+// so repeated heartbeat commands never glitch the PWM.
+static void driveSide(uint8_t en, uint8_t inA, uint8_t inB, int value, int previous) {
+  if (signOf(value) != signOf(previous)) {
+    analogWrite(en, 0);  // dead-time only when direction changes
+    digitalWrite(inA, value > 0 ? HIGH : LOW);
+    digitalWrite(inB, value < 0 ? HIGH : LOW);
+  }
+  analogWrite(en, toPwm(value));
+}
 
 void stopMotors() {
   analogWrite(ENA, 0);
@@ -60,24 +92,15 @@ void setMotors(int left, int right) {
   left = constrain(left, -255, 255);
   right = constrain(right, -255, 255);
 
-  // Stop PWM while switching motor direction.
-  analogWrite(ENA, 0);
-  analogWrite(ENB, 0);
+  lastCommandTime = millis();  // every valid command refreshes the failsafe
 
-  // Left motor direction.
-  digitalWrite(IN1, left > 0 ? HIGH : LOW);
-  digitalWrite(IN2, left < 0 ? HIGH : LOW);
+  if (left == currentLeft && right == currentRight) return;
 
-  // Right motor direction.
-  digitalWrite(IN3, right > 0 ? HIGH : LOW);
-  digitalWrite(IN4, right < 0 ? HIGH : LOW);
-
-  analogWrite(ENA, abs(left));
-  analogWrite(ENB, abs(right));
+  driveSide(ENA, IN1, IN2, left, currentLeft);
+  driveSide(ENB, IN3, IN4, right, currentRight);
 
   currentLeft = left;
   currentRight = right;
-  lastCommandTime = millis();
 }
 
 // ======================================================
@@ -842,7 +865,7 @@ button:focus-visible, input:focus-visible {
 
   <header class="topbar">
     <div class="brand">
-      <div class="car-icon">???</div>
+      <div class="car-icon">&#128663;</div>
       <h1>Robo<span>Racer</span></h1>
     </div>
 
@@ -853,7 +876,7 @@ button:focus-visible, input:focus-visible {
       </div>
 
       <button type="button" class="icon-button" id="settingsButton">
-        ? <span>SETTINGS</span>
+        &#9881;&#xFE0E; <span>SETTINGS</span>
       </button>
     </div>
   </header>
@@ -878,19 +901,19 @@ button:focus-visible, input:focus-visible {
   <div class="mode-row">
     <span class="section-label">QUICK SPEED</span>
     <span class="section-label" id="sensitivitySummary">
-      STEERING L 100% · R 100%
+      STEERING L 100% &middot; R 100%
     </span>
   </div>
 
   <main class="controls" id="classicControls">
     <div class="vertical-arrows">
-      <button type="button" class="arrow arrow-up" data-c="F" id="btnF">?</button>
-      <button type="button" class="arrow arrow-down" data-c="B" id="btnB">?</button>
+      <button type="button" class="arrow arrow-up" data-c="F" id="btnF" aria-label="Forward">&#9650;&#xFE0E;</button>
+      <button type="button" class="arrow arrow-down" data-c="B" id="btnB" aria-label="Reverse">&#9660;&#xFE0E;</button>
     </div>
 
     <div class="horizontal-arrows">
-      <button type="button" class="arrow arrow-left" data-c="L" id="btnL">?</button>
-      <button type="button" class="arrow arrow-right" data-c="R" id="btnR">?</button>
+      <button type="button" class="arrow arrow-left" data-c="L" id="btnL" aria-label="Left">&#9664;&#xFE0E;</button>
+      <button type="button" class="arrow arrow-right" data-c="R" id="btnR" aria-label="Right">&#9654;&#xFE0E;</button>
     </div>
   </main>
 
@@ -910,7 +933,7 @@ button:focus-visible, input:focus-visible {
       <div class="stick-pad" id="throttlePad" data-stick="throttle">
         <div class="stick-knob" id="throttleKnob"></div>
       </div>
-      <div class="stick-hint">Up: forward · Down: reverse</div>
+      <div class="stick-hint">Up: forward &middot; Down: reverse</div>
     </div>
 
     <div class="stick-column">
@@ -934,7 +957,7 @@ button:focus-visible, input:focus-visible {
       </div>
 
       <div class="slider-wrap">
-        <input id="speedSlider" type="range" min="0" max="255" value="170">
+        <input id="speedSlider" type="range" min="0" max="255" value="170" aria-label="Motor output limit">
       </div>
 
       <div class="speed-labels">
@@ -950,17 +973,17 @@ button:focus-visible, input:focus-visible {
   </section>
 
   <div class="footer">
-    Hold controls to drive · Slide between arrows without lifting · Space = STOP
+    Hold controls to drive &middot; Slide between arrows without lifting &middot; Space = STOP
   </div>
 
 </div>
 </div>
 
-<div class="modal-backdrop" id="settingsBackdrop" role="dialog" aria-modal="true">
+<div class="modal-backdrop" id="settingsBackdrop" role="dialog" aria-modal="true" aria-label="Controller settings">
   <section class="settings-panel">
     <div class="settings-header">
       <h2>Controller settings</h2>
-      <button type="button" class="close-button" id="closeSettings">×</button>
+      <button type="button" class="close-button" id="closeSettings" aria-label="Close settings">&times;</button>
     </div>
 
     <p class="settings-subtitle">Personalize the way RoboRacer responds.</p>
@@ -994,14 +1017,14 @@ button:focus-visible, input:focus-visible {
       </div>
 
       <div class="sensitivity-row">
-        <label for="leftSensitivity">Left turn (?)</label>
+        <label for="leftSensitivity">Left turn (&#9664;&#xFE0E;)</label>
         <output class="sensitivity-value" id="leftSensitivityValue">100%</output>
         <input class="sensitivity-slider" id="leftSensitivity"
                type="range" min="25" max="150" step="5" value="100">
       </div>
 
       <div class="sensitivity-row">
-        <label for="rightSensitivity">Right turn (?)</label>
+        <label for="rightSensitivity">Right turn (&#9654;&#xFE0E;)</label>
         <output class="sensitivity-value" id="rightSensitivityValue">100%</output>
         <input class="sensitivity-slider" id="rightSensitivity"
                type="range" min="25" max="150" step="5" value="100">
@@ -1010,9 +1033,9 @@ button:focus-visible, input:focus-visible {
 
     <div class="setting-block">
       <div class="always-on">
-        <span class="checkmark">?</span>
+        <span class="checkmark">&#10003;</span>
         <div>
-          <strong>Slide between buttons — ALWAYS ON</strong>
+          <strong>Slide between buttons &mdash; ALWAYS ON</strong>
           <small>
             Slide from one arrow to another without lifting your finger.
             This behavior cannot be disabled.
@@ -1037,6 +1060,7 @@ button:focus-visible, input:focus-visible {
 "use strict";
 
 const $ = id => document.getElementById(id);
+const DOT = "\u00B7";
 
 const connection = $("connection");
 const statusText = $("statusText");
@@ -1064,6 +1088,20 @@ const stickState = {
   steering: { x: 0, y: 0 }
 };
 
+const STICK_IDS = {
+  single: { pad: "singlePad", knob: "singleKnob" },
+  throttle: { pad: "throttlePad", knob: "throttleKnob" },
+  steering: { pad: "steeringPad", knob: "steeringKnob" }
+};
+
+// Same constant is used for input and for knob rendering,
+// so the knob reaches the edge exactly when output is 100%.
+const STICK_RANGE = 0.32;
+
+const REQUEST_TIMEOUT_MS = 500;
+const HEARTBEAT_MS = 300;
+const STOP_RETRIES = 2;
+
 const DEFAULT_SETTINGS = {
   layout: "classic",
   leftSensitivity: 100,
@@ -1073,11 +1111,13 @@ const DEFAULT_SETTINGS = {
 let settings = { ...DEFAULT_SETTINGS };
 let activeCommand = "S";
 let heartbeat = null;
-let speedTimer = null;
 let speed = 170;
-let requestChain = Promise.resolve();
-let commandGeneration = 0;
 let lastDrive = { l: 0, r: 0 };
+
+// ---------- Networking: single in-flight request, latest command wins ----------
+
+let pending = null;
+let inFlight = false;
 
 function setStatus(state, text) {
   connection.classList.remove("online", "error");
@@ -1088,48 +1128,53 @@ function setStatus(state, text) {
   statusText.textContent = text;
 }
 
-function enqueueRequest(path, generation, allowStale = false) {
-  const task = requestChain.then(async () => {
-    if (!allowStale && generation !== commandGeneration) return null;
+async function pump() {
+  if (inFlight || !pending) return;
 
-    const response = await fetch(path, {
+  const cmd = pending;
+  pending = null;
+  inFlight = true;
+
+  const isStop = cmd.l === 0 && cmd.r === 0;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+  try {
+    const response = await fetch("/drive?l=" + cmd.l + "&r=" + cmd.r, {
       method: "GET",
-      cache: "no-store"
+      cache: "no-store",
+      keepalive: isStop,
+      signal: controller.signal
     });
 
     if (!response.ok) throw new Error("HTTP " + response.status);
 
-    return response;
-  });
+    setStatus("online", "CONNECTED");
+  } catch (_) {
+    setStatus("error", "CONNECTION ERROR");
 
-  requestChain = task.catch(() => {});
-  return task;
+    // A lost STOP is retried; newer commands always take priority.
+    const tries = cmd.tries || 0;
+    if (isStop && tries < STOP_RETRIES && !pending) {
+      pending = { l: 0, r: 0, tries: tries + 1 };
+    }
+  } finally {
+    clearTimeout(timer);
+    inFlight = false;
+    if (pending) pump();
+  }
 }
 
-function sendDrive(left, right, forceStop = false) {
-  const generation = commandGeneration;
-
+function sendDrive(left, right) {
   const l = Math.max(-255, Math.min(255, Math.round(left)));
   const r = Math.max(-255, Math.min(255, Math.round(right)));
 
   lastDrive = { l, r };
   activeCommand = (l === 0 && r === 0) ? "S" : "D";
-
   driveState.textContent = activeCommand === "S" ? "STOPPED" : "MOVING";
 
-  const path = "/drive?l=" + l + "&r=" + r;
-
-  enqueueRequest(path, generation, forceStop)
-    .then(response => {
-      if (response && generation === commandGeneration) {
-        setStatus("online", "CONNECTED");
-      }
-    })
-    .catch(() => {
-      if (generation === commandGeneration) {
-        setStatus("error", "CONNECTION ERROR");
-      }
-    });
+  pending = { l, r, tries: 0 };  // replaces any older queued command
+  pump();
 }
 
 function startHeartbeat() {
@@ -1139,7 +1184,7 @@ function startHeartbeat() {
     if (activeCommand !== "S") {
       sendDrive(lastDrive.l, lastDrive.r);
     }
-  }, 300);
+  }, HEARTBEAT_MS);
 }
 
 function stopHeartbeat() {
@@ -1148,6 +1193,8 @@ function stopHeartbeat() {
     heartbeat = null;
   }
 }
+
+// ---------- Control math ----------
 
 function normalizeAxes(throttle, steering) {
   throttle = Math.max(-1, Math.min(1, throttle));
@@ -1173,13 +1220,17 @@ function normalizeAxes(throttle, steering) {
   };
 }
 
-function getButtonAxes() {
-  const pressed = {
+function pressedButtons() {
+  return {
     F: buttonState.F || keyboardState.F,
     B: buttonState.B || keyboardState.B,
     L: buttonState.L || keyboardState.L,
     R: buttonState.R || keyboardState.R
   };
+}
+
+function getButtonAxes() {
+  const pressed = pressedButtons();
 
   return {
     throttle: pressed.F === pressed.B ? 0 : pressed.F ? 1 : -1,
@@ -1221,12 +1272,7 @@ function getAxes() {
 }
 
 function renderButtonStates() {
-  const pressed = {
-    F: buttonState.F || keyboardState.F,
-    B: buttonState.B || keyboardState.B,
-    L: buttonState.L || keyboardState.L,
-    R: buttonState.R || keyboardState.R
-  };
+  const pressed = pressedButtons();
 
   Object.keys(btnMap).forEach(key => {
     btnMap[key].classList.toggle("active", pressed[key]);
@@ -1239,16 +1285,27 @@ function evaluateControls() {
   const axes = getAxes();
   const output = normalizeAxes(axes.throttle, axes.steering);
 
-  sendDrive(output.l, output.r);
+  outputValue.textContent =
+    Math.max(Math.abs(output.l), Math.abs(output.r)) + " / 255";
+
+  // Only send when the output actually changed; the heartbeat
+  // keeps the failsafe alive while holding a steady value.
+  if (output.l !== lastDrive.l || output.r !== lastDrive.r) {
+    sendDrive(output.l, output.r);
+  }
 
   if (output.l === 0 && output.r === 0) {
     stopHeartbeat();
   } else {
     startHeartbeat();
   }
+}
 
-  outputValue.textContent =
-    Math.max(Math.abs(output.l), Math.abs(output.r)) + " / 255";
+function resetKnobs() {
+  Object.keys(STICK_IDS).forEach(name => {
+    const knob = $(STICK_IDS[name].knob);
+    if (knob) knob.style.transform = "translate(-50%,-50%)";
+  });
 }
 
 function clearInputs() {
@@ -1262,28 +1319,20 @@ function clearInputs() {
     stickState[key].y = 0;
   });
 
-  ["singleKnob", "throttleKnob", "steeringKnob"].forEach(id => {
-    const knob = $(id);
-    if (knob) knob.style.transform = "translate(-50%,-50%)";
-  });
-
+  resetKnobs();
   renderButtonStates();
 }
 
 function stopAll() {
-  commandGeneration++;
   clearInputs();
-
-  activeCommand = "S";
-  lastDrive = { l: 0, r: 0 };
-
   stopHeartbeat();
 
-  driveState.textContent = "STOPPED";
   outputValue.textContent = "0 / 255";
 
-  sendDrive(0, 0, true);
+  sendDrive(0, 0);  // replaces anything queued, so STOP is always next
 }
+
+// ---------- Pointer handling ----------
 
 function buttonUnderPointer(event) {
   const element = document.elementFromPoint(event.clientX, event.clientY);
@@ -1368,20 +1417,14 @@ document.addEventListener("pointerup", releasePointer);
 document.addEventListener("pointercancel", releasePointer);
 
 function renderStick(name) {
-  const ids = {
-    single: "singleKnob",
-    throttle: "throttleKnob",
-    steering: "steeringKnob"
-  };
-
-  const knob = $(ids[name]);
+  const knob = $(STICK_IDS[name].knob);
   if (!knob) return;
 
   const state = stickState[name];
   const pad = knob.parentElement;
 
-  const maxX = pad.clientWidth * 0.32;
-  const maxY = pad.clientHeight * 0.32;
+  const maxX = pad.clientWidth * STICK_RANGE;
+  const maxY = pad.clientHeight * STICK_RANGE;
 
   knob.style.transform =
     "translate(calc(-50% + " + state.x * maxX +
@@ -1389,23 +1432,21 @@ function renderStick(name) {
 }
 
 function updateStickFromPointer(name, x, y) {
-  const ids = {
-    single: "singlePad",
-    throttle: "throttlePad",
-    steering: "steeringPad"
-  };
-
-  const pad = $(ids[name]);
+  const pad = $(STICK_IDS[name].pad);
   const rect = pad.getBoundingClientRect();
 
-  let nx = (x - (rect.left + rect.width / 2)) / (rect.width * 0.34);
-  let ny = (y - (rect.top + rect.height / 2)) / (rect.height * 0.34);
-
-  nx = Math.max(-1, Math.min(1, nx));
-  ny = Math.max(-1, Math.min(1, ny));
+  let nx = (x - (rect.left + rect.width / 2)) / (rect.width * STICK_RANGE);
+  let ny = (y - (rect.top + rect.height / 2)) / (rect.height * STICK_RANGE);
 
   if (name === "throttle") nx = 0;
   if (name === "steering") ny = 0;
+
+  // Clamp to a circle (not a square) so diagonals never exceed 1.
+  const mag = Math.hypot(nx, ny);
+  if (mag > 1) {
+    nx /= mag;
+    ny /= mag;
+  }
 
   stickState[name] = { x: nx, y: ny };
 
@@ -1413,14 +1454,12 @@ function updateStickFromPointer(name, x, y) {
   evaluateControls();
 }
 
-["singlePad", "throttlePad", "steeringPad"].forEach(id => {
-  const pad = $(id);
+Object.keys(STICK_IDS).forEach(name => {
+  const pad = $(STICK_IDS[name].pad);
   if (!pad) return;
 
   pad.addEventListener("pointerdown", event => {
     event.preventDefault();
-
-    const name = pad.dataset.stick;
 
     try {
       pad.setPointerCapture(event.pointerId);
@@ -1428,12 +1467,14 @@ function updateStickFromPointer(name, x, y) {
 
     pointerActions.set(event.pointerId, {
       type: "stick",
-      stick: name
+      stick: pad.dataset.stick
     });
 
-    updateStickFromPointer(name, event.clientX, event.clientY);
+    updateStickFromPointer(pad.dataset.stick, event.clientX, event.clientY);
   });
 });
+
+// ---------- Keyboard ----------
 
 const keyToDir = {
   ArrowUp: "F",
@@ -1446,6 +1487,10 @@ const keyToDir = {
   KeyD: "R"
 };
 
+function settingsOpen() {
+  return $("settingsBackdrop").classList.contains("open");
+}
+
 window.addEventListener("keydown", event => {
   if (event.code === "Space") {
     event.preventDefault();
@@ -1453,8 +1498,8 @@ window.addEventListener("keydown", event => {
     return;
   }
 
-  // FIX: keyboard driving is disabled while Settings is open.
-  if ($("settingsBackdrop").classList.contains("open")) return;
+  // Keyboard driving is disabled while Settings is open.
+  if (settingsOpen()) return;
 
   const direction = keyToDir[event.code];
 
@@ -1472,11 +1517,13 @@ window.addEventListener("keyup", event => {
     event.preventDefault();
     keyboardState[direction] = false;
 
-    if (!$("settingsBackdrop").classList.contains("open")) {
+    if (!settingsOpen()) {
       evaluateControls();
     }
   }
 });
+
+// ---------- Stop button ----------
 
 $("stopButton").addEventListener("pointerdown", event => {
   event.preventDefault();
@@ -1488,6 +1535,8 @@ $("stopButton").addEventListener("click", event => {
   stopAll();
 });
 
+// ---------- Speed limit (applied in the browser only) ----------
+
 function updateSpeed(value) {
   speed = Math.max(0, Math.min(255, Number(value) || 0));
   speedValue.textContent = speed;
@@ -1496,26 +1545,7 @@ function updateSpeed(value) {
     button.classList.toggle("selected", Number(button.dataset.speed) === speed);
   });
 
-  if (speedTimer !== null) clearTimeout(speedTimer);
-
-  speedTimer = setTimeout(() => {
-    const generation = commandGeneration;
-
-    enqueueRequest("/speed?v=" + speed, generation)
-      .then(response => {
-        if (response && generation === commandGeneration) {
-          setStatus("online", "CONNECTED");
-        }
-      })
-      .catch(() => {
-        if (generation === commandGeneration) {
-          setStatus("error", "SPEED ERROR");
-        }
-      });
-
-    evaluateControls();
-    speedTimer = null;
-  }, 80);
+  evaluateControls();
 }
 
 slider.addEventListener("input", event => updateSpeed(event.target.value));
@@ -1526,6 +1556,8 @@ document.querySelectorAll("[data-speed]").forEach(button => {
     updateSpeed(button.dataset.speed);
   });
 });
+
+// ---------- Settings ----------
 
 function clampSensitivity(value) {
   const number = Number(value);
@@ -1571,7 +1603,7 @@ function renderSettings() {
 
   sensitivitySummary.textContent =
     "STEERING L " + settings.leftSensitivity +
-    "% · R " + settings.rightSensitivity + "%";
+    "% " + DOT + " R " + settings.rightSensitivity + "%";
 
   $("classicControls").classList.toggle(
     "layout-hidden", settings.layout !== "classic"
@@ -1599,11 +1631,7 @@ function renderSettings() {
       stickState[key].y = 0;
     });
 
-    ["singleKnob", "throttleKnob", "steeringKnob"].forEach(id => {
-      const knob = $(id);
-      if (knob) knob.style.transform = "translate(-50%,-50%)";
-    });
-
+    resetKnobs();
     renderButtonStates();
   }
 }
@@ -1627,8 +1655,7 @@ $("settingsBackdrop").addEventListener("click", event => {
 });
 
 document.addEventListener("keydown", event => {
-  if (event.key === "Escape" &&
-      $("settingsBackdrop").classList.contains("open")) {
+  if (event.key === "Escape" && settingsOpen()) {
     closeSettings();
   }
 });
@@ -1661,6 +1688,8 @@ $("resetSettings").addEventListener("click", () => {
   renderSettings();
 });
 
+// ---------- Safety: stop whenever the page loses focus ----------
+
 window.addEventListener("blur", stopAll);
 
 document.addEventListener("visibilitychange", () => {
@@ -1681,42 +1710,19 @@ setStatus("", "READY");
 // HTTP ROUTES
 // ======================================================
 
-void handleSpeed() {
-  if (!server.hasArg("v")) {
-    server.send(400, "text/plain", "Missing speed");
-    return;
+// Strict signed-integer parser. Returns false if the text is not a valid integer.
+static bool parseSigned(const String& s, int& out) {
+  if (s.length() == 0 || s.length() > 4) return false;
+
+  unsigned int i = (s.charAt(0) == '-') ? 1 : 0;
+  if (i == s.length()) return false;
+
+  for (unsigned int j = i; j < s.length(); j++) {
+    if (s.charAt(j) < '0' || s.charAt(j) > '9') return false;
   }
 
-  String value = server.arg("v");
-
-  if (value.length() == 0 || value.length() > 3) {
-    server.send(400, "text/plain", "Invalid speed");
-    return;
-  }
-
-  for (unsigned int i = 0; i < value.length(); i++) {
-    if (value.charAt(i) < '0' || value.charAt(i) > '9') {
-      server.send(400, "text/plain", "Invalid speed");
-      return;
-    }
-  }
-
-  int requested = value.toInt();
-
-  if (requested < 0 || requested > 255) {
-    server.send(400, "text/plain", "Speed must be 0-255");
-    return;
-  }
-
-  motorSpeed = requested;
-
-  // If a speed command is set to zero, stop the robot.
-  if (motorSpeed == 0) {
-    stopMotors();
-  }
-
-  lastCommandTime = millis();
-  server.send(200, "text/plain", "OK");
+  out = s.toInt();
+  return true;
 }
 
 void handleDrive() {
@@ -1725,42 +1731,21 @@ void handleDrive() {
     return;
   }
 
-  String leftText = server.arg("l");
-  String rightText = server.arg("r");
+  int left, right;
 
-  if (leftText.length() == 0 || rightText.length() == 0 ||
-      leftText.length() > 4 || rightText.length() > 4) {
-    server.send(400, "text/plain", "Invalid motor values");
-    return;
-  }
-
-  // Validate signed integer text before conversion.
-  auto validInteger = [](const String& s) -> bool {
-    unsigned int i = (s.length() && s.charAt(0) == '-') ? 1 : 0;
-    if (i == s.length()) return false;
-
-    for (; i < s.length(); i++) {
-      if (s.charAt(i) < '0' || s.charAt(i) > '9') return false;
-    }
-    return true;
-  };
-
-  if (!validInteger(leftText) || !validInteger(rightText)) {
+  if (!parseSigned(server.arg("l"), left) ||
+      !parseSigned(server.arg("r"), right)) {
     server.send(400, "text/plain", "Values must be integers");
     return;
   }
 
-  int left = leftText.toInt();
-  int right = rightText.toInt();
-
-  if (left < -255 || left > 255 ||
-      right < -255 || right > 255) {
+  if (left < -255 || left > 255 || right < -255 || right > 255) {
     server.send(400, "text/plain", "Values must be -255..255");
     return;
   }
 
-  // The browser calculates steering and speed.
-  // Firmware applies the signed motor values directly.
+  // The browser calculates steering and speed limit;
+  // firmware applies the signed motor values directly.
   setMotors(left, right);
   server.send(200, "text/plain", "OK");
 }
@@ -1768,6 +1753,7 @@ void handleDrive() {
 void setup() {
   Serial.begin(115200);
 
+  // Hold everything low as early as possible.
   pinMode(ENA, OUTPUT);
   pinMode(IN1, OUTPUT);
   pinMode(IN2, OUTPUT);
@@ -1784,7 +1770,8 @@ void setup() {
   WiFi.mode(WIFI_AP);
   WiFi.setSleepMode(WIFI_NONE_SLEEP);
 
-  bool started = WiFi.softAP(ssid, password);
+  // channel, not hidden, limited client count
+  bool started = WiFi.softAP(ssid, password, WIFI_CHANNEL, false, WIFI_MAX_CLIENTS);
 
   if (started) {
     Serial.println();
@@ -1798,10 +1785,10 @@ void setup() {
   }
 
   server.on("/", HTTP_GET, []() {
-    server.send_P(200, "text/html", webpage);
+    server.sendHeader("Cache-Control", "no-store");
+    server.send_P(200, "text/html; charset=utf-8", webpage);
   });
 
-  server.on("/speed", HTTP_GET, handleSpeed);
   server.on("/drive", HTTP_GET, handleDrive);
 
   server.onNotFound([]() {
@@ -1817,11 +1804,13 @@ void setup() {
 void loop() {
   server.handleClient();
 
-  // Stop the motors if browser commands disappear.
-  if ((currentLeft != 0 || currentRight != 0) &&
-      millis() - lastCommandTime >= FAILSAFE_MS) {
-    stopMotors();
-  }
+  bool moving = (currentLeft != 0 || currentRight != 0);
 
-  yield();
+  if (moving) {
+    // Stop if browser commands disappear or every client has left the AP.
+    if (millis() - lastCommandTime >= FAILSAFE_MS ||
+        WiFi.softAPgetStationNum() == 0) {
+      stopMotors();
+    }
+  }
 }
