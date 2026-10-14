@@ -184,15 +184,13 @@ const char webpage[] PROGMEM = R"rawliteral(
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <meta name="theme-color" content="#0b0e15">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="mobile-web-app-capable" content="yes">
 <title>RoboRacer Controller</title>
 
 <style>
 :root {
   --bg:#0b0e15;
-  --panel:#131a26;
-  --border:#222f44;
+  --panel:#111722;
+  --border:#202b3d;
   --blue:#1678ff;
   --blue-light:#75b4ff;
   --text:#f5f7ff;
@@ -211,20 +209,19 @@ const char webpage[] PROGMEM = R"rawliteral(
 html,body {
   margin:0;
   padding:0;
-  width:100%;
-  height:100%;
-  overflow:hidden;
-  overscroll-behavior:none;
+  min-height:100%;
   background:var(--bg);
-  touch-action:none;
+  overscroll-behavior:none;
 }
 
 body {
-  height:100vh;
-  height:100dvh;
-  background:radial-gradient(ellipse at 50% 0%,#172234,transparent 70%),var(--bg);
+  min-height:100vh;
+  background:radial-gradient(ellipse at 50% 0%,#172131,transparent 65%),var(--bg);
   color:var(--text);
-  font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+  font-family:Arial,Helvetica,sans-serif;
+  display:flex;
+  align-items:center;
+  justify-content:center;
 }
 
 button,input {font:inherit}
@@ -232,41 +229,28 @@ button {cursor:pointer}
 
 .app {
   width:100%;
-  height:100%;
-  max-width:1200px;
-  margin:0 auto;
-  padding:
-    max(8px, env(safe-area-inset-top))
-    max(10px, env(safe-area-inset-right))
-    max(8px, env(safe-area-inset-bottom))
-    max(10px, env(safe-area-inset-left));
-  display:flex;
-  align-items:center;
-  justify-content:center;
+  max-width:960px;
+  margin:auto;
+  padding:8px;
 }
 
 .controller {
   width:100%;
-  height:100%;
-  display:flex;
-  flex-direction:column;
-  justify-content:space-between;
-  border:1px solid var(--border);
-  border-radius:22px;
-  background:linear-gradient(145deg,#151c28,#0d121b);
-  box-shadow:0 16px 50px #0008,inset 0 1px 0 #ffffff0a;
   overflow:hidden;
+  border:1px solid var(--border);
+  border-radius:20px;
+  background:linear-gradient(145deg,#151c28,#0e131d);
+  box-shadow:0 16px 50px #0006,inset 0 1px 0 #ffffff08;
 }
 
-/* --- TOP HEADER --- */
 .topbar {
-  padding:10px 16px;
-  border-bottom:1px solid #1b2536;
+  padding:12px 16px;
+  border-bottom:1px solid var(--border);
   display:flex;
   align-items:center;
   justify-content:space-between;
-  gap:10px;
-  flex-shrink:0;
+  gap:12px;
+  flex-wrap:wrap;
 }
 
 .brand {
@@ -277,77 +261,49 @@ button {cursor:pointer}
 
 .car-icon {
   font-size:24px;
-  filter:drop-shadow(0 0 8px #1678ff66);
+  filter:drop-shadow(0 0 8px #1678ff55);
 }
 
 .brand h1 {
   margin:0;
-  font-size:clamp(18px,4vw,26px);
+  font-size:22px;
   font-weight:900;
-  letter-spacing:-0.8px;
+  letter-spacing:-1px;
 }
 
 .brand h1 span {color:var(--blue)}
 
-.status-group {
-  display:flex;
-  align-items:center;
-  gap:10px;
-}
-
 .connection {
   display:flex;
   align-items:center;
-  gap:7px;
-  padding:5px 10px;
-  border-radius:99px;
-  background:#0c111a;
-  border:1px solid #1e2a3d;
+  gap:8px;
   color:var(--muted);
-  font-size:11px;
+  font-size:12px;
   font-weight:800;
   letter-spacing:.6px;
 }
 
 .connection-dot {
-  width:9px;
-  height:9px;
+  width:10px;
+  height:10px;
   flex-shrink:0;
   border-radius:50%;
   background:#8792a5;
 }
 
 .connection.online .connection-dot {
-  background:#00e676;
-  box-shadow:0 0 10px #00e676aa;
+  background:var(--blue);
+  box-shadow:0 0 12px #1678ff99;
 }
 
 .connection.error .connection-dot {
   background:var(--red);
-  box-shadow:0 0 10px #f21c3baa;
+  box-shadow:0 0 12px #f21c3b88;
 }
 
-.fs-btn {
-  width:34px;
-  height:34px;
-  border-radius:10px;
-  border:1px solid #28364f;
-  background:#182232;
-  color:var(--text);
-  font-size:16px;
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  touch-action:manipulation;
-}
-
-.fs-btn:active {transform:scale(.94)}
-
-/* --- MAIN DRIVE CONTROLS --- */
+/* Touch-Friendly Dual-Thumb Controls */
 .controls {
-  flex:1;
-  min-height:0;
-  padding:10px 14px;
+  padding:18px 12px;
   display:grid;
   grid-template-columns:1fr 1.35fr;
   align-items:center;
@@ -358,18 +314,15 @@ button {cursor:pointer}
 
 .vertical-arrows {
   width:100%;
-  height:100%;
   display:flex;
   flex-direction:column;
   align-items:center;
-  justify-content:center;
   gap:14px;
   touch-action:none;
 }
 
 .horizontal-arrows {
   width:100%;
-  height:100%;
   display:flex;
   align-items:center;
   justify-content:center;
@@ -383,52 +336,47 @@ button {cursor:pointer}
   justify-content:center;
   padding:0;
   color:#e9efff;
-  background:linear-gradient(155deg,#223047,#121a28);
-  border:2px solid #283852;
-  border-radius:20px;
-  box-shadow:0 6px 0 #070b12,0 10px 22px #0006,inset 0 1px 0 #ffffff18;
+  background:linear-gradient(145deg,#202c40,#121a28);
+  border:2px solid #070b12;
+  border-radius:16px;
+  box-shadow:0 5px 0 #070b12,inset 0 1px 0 #ffffff12;
   touch-action:none;
-  transition:background .05s,transform .05s,box-shadow .05s,border-color .05s;
+  transition:background .06s,color .06s,transform .06s,box-shadow .06s;
 }
 
-/* Big ergonomic thumb targets */
 .arrow-up,.arrow-down {
-  width:100%;
-  max-width:150px;
-  height:clamp(80px,19vh,145px);
-  font-size:clamp(44px,9vw,76px);
+  width:92px;
+  height:88px;
+  font-size:48px;
   line-height:1;
 }
 
 .arrow-left,.arrow-right {
-  flex:1;
-  max-width:170px;
-  height:clamp(92px,22vh,165px);
-  font-size:clamp(44px,9vw,76px);
+  width:96px;
+  height:88px;
+  font-size:48px;
   line-height:1;
 }
 
 .arrow.active {
-  color:#fff;
-  background:linear-gradient(145deg,#4da0ff,#0f62fe);
-  border-color:#8ec5ff;
-  box-shadow:0 2px 0 #070b12,0 0 28px #1678ff88;
-  transform:translateY(4px);
+  color:white;
+  background:linear-gradient(145deg,#56a1ff,#1269f2);
+  border-color:var(--blue);
+  box-shadow:0 0 0 3px #1678ff25,0 0 25px #1678ff4a;
+  transform:translateY(3px);
 }
 
-/* --- BOTTOM SPEED & STOP BAR --- */
 .bottom-bar {
-  flex-shrink:0;
   border-top:1px solid var(--border);
-  background:#0e141f;
-  padding:12px 16px;
+  padding:14px 16px;
   display:grid;
   grid-template-columns:1fr;
-  gap:12px;
+  align-items:center;
+  gap:14px;
 }
 
 .stop-button {
-  min-height:54px;
+  min-height:52px;
   width:100%;
   display:flex;
   align-items:center;
@@ -436,19 +384,18 @@ button {cursor:pointer}
   gap:10px;
   padding:10px;
   border:0;
-  border-radius:16px;
-  background:linear-gradient(120deg,#ff2144,#d60026);
+  border-radius:40px;
+  background:linear-gradient(120deg,#ff2144,#e9002b);
   color:white;
   font-size:18px;
   font-weight:900;
-  letter-spacing:.8px;
-  box-shadow:0 5px 18px #ed153540,inset 0 1px 0 #ffffff40;
-  touch-action:none;
+  box-shadow:0 6px 16px #ed153526,inset 0 1px 0 #ffffff35;
+  touch-action:manipulation;
 }
 
 .stop-button:active {
-  transform:scale(.98);
-  background:#b80020;
+  transform:scale(.97);
+  background:#c90025;
 }
 
 .stop-square {
@@ -459,6 +406,7 @@ button {cursor:pointer}
 }
 
 .speed-area {
+  min-width:0;
   width:100%;
 }
 
@@ -466,14 +414,15 @@ button {cursor:pointer}
   display:flex;
   justify-content:space-between;
   align-items:center;
+  gap:10px;
   margin-bottom:6px;
 }
 
 .speed-title {
   color:var(--muted);
-  font-size:12px;
+  font-size:13px;
   font-weight:900;
-  letter-spacing:.8px;
+  letter-spacing:.6px;
 }
 
 .speed-number {
@@ -483,55 +432,61 @@ button {cursor:pointer}
   font-variant-numeric:tabular-nums;
 }
 
-.slider-wrap {
-  padding:6px 0;
-}
+.slider-wrap {padding:4px 0 6px}
 
 #speedSlider {
   display:block;
   width:100%;
-  height:14px;
+  height:12px;
   margin:0;
   border-radius:20px;
   outline:none;
-  background:#233047;
+  background:#253248;
   appearance:none;
   -webkit-appearance:none;
   cursor:pointer;
-  touch-action:pan-x;
+  touch-action:pan-y;
 }
 
 #speedSlider::-webkit-slider-thumb {
   appearance:none;
   -webkit-appearance:none;
-  width:32px;
-  height:32px;
-  border-radius:50%;
-  background:var(--blue);
-  border:3px solid #9bc7ff;
-  box-shadow:0 0 14px #1678ff88;
-}
-
-#speedSlider::-moz-range-thumb {
   width:28px;
   height:28px;
   border-radius:50%;
   background:var(--blue);
-  border:3px solid #9bc7ff;
+  border:2px solid #4095ff;
+  box-shadow:0 0 14px #1678ff55;
+}
+
+#speedSlider::-moz-range-thumb {
+  width:26px;
+  height:26px;
+  border-radius:50%;
+  background:var(--blue);
+  border:2px solid #4095ff;
+}
+
+.speed-labels {
+  display:flex;
+  justify-content:space-between;
+  margin-top:6px;
+  color:#8594ab;
+  font-size:10px;
 }
 
 .presets {
   display:grid;
   grid-template-columns:repeat(3,1fr);
   gap:8px;
-  margin-top:8px;
+  margin-top:10px;
 }
 
 .preset {
-  min-height:38px;
-  border:1px solid #303e57;
-  border-radius:10px;
-  background:#182232;
+  min-height:36px;
+  border:1px solid #344158;
+  border-radius:9px;
+  background:#1a2434;
   color:#d8e3f5;
   font-size:12px;
   font-weight:900;
@@ -540,97 +495,59 @@ button {cursor:pointer}
 
 .preset.selected {
   background:#155ac0;
-  border-color:#4d9aff;
+  border-color:#3288ff;
   color:white;
 }
 
-.preset:active {transform:scale(.96)}
+.preset:active {transform:scale(.97)}
 
-/* --- LANDSCAPE GAMEPAD MODE (Best for Mobile Racing) --- */
-@media (orientation: landscape) and (max-height: 600px) {
-  .topbar {
-    padding:6px 14px;
-  }
-  .brand h1 {font-size:18px}
-  .car-icon {font-size:20px}
+.footer {
+  padding:0 12px 10px;
+  text-align:center;
+  color:#65758d;
+  font-size:11px;
+}
 
-  /* 3-Column Gamepad: [Throttle Left] [Center Console] [Steering Right] */
-  .controller {
-    display:grid;
-    grid-template-columns:1fr minmax(185px, 0.85fr) 1.25fr;
-    grid-template-rows:auto 1fr;
-    grid-template-areas:
-      "top top top"
-      "left center right";
-  }
+/* Very small phones */
+@media(max-width:370px) {
+  .controls {padding:14px 8px;gap:8px}
+  .arrow-up,.arrow-down {width:78px;height:76px;font-size:42px}
+  .arrow-left,.arrow-right {width:80px;height:76px;font-size:42px}
+  .horizontal-arrows {gap:8px}
+}
 
-  .topbar {grid-area:top}
-
-  .controls {
-    display:contents;
-  }
-
-  .vertical-arrows {
-    grid-area:left;
-    padding:10px 14px;
-    gap:12px;
-  }
-
-  .horizontal-arrows {
-    grid-area:right;
-    padding:10px 14px;
-    gap:12px;
-  }
-
+/* Larger tablets & desktops */
+@media(min-width:650px) {
+  .app {padding:20px}
+  .controls {padding:32px 40px;gap:30px}
+  .arrow-up,.arrow-down {width:125px;height:120px;font-size:68px}
+  .arrow-left,.arrow-right {width:150px;height:115px;font-size:68px}
   .bottom-bar {
-    grid-area:center;
-    border-top:0;
-    border-left:1px solid var(--border);
-    border-right:1px solid var(--border);
-    height:100%;
-    padding:10px 12px;
-    display:flex;
-    flex-direction:column;
-    justify-content:center;
-    gap:10px;
-  }
-
-  .arrow-up,.arrow-down {
-    max-width:none;
-    width:100%;
-    height:45%;
-    font-size:clamp(38px,11vh,64px);
-  }
-
-  .arrow-left,.arrow-right {
-    max-width:none;
-    height:72%;
-    font-size:clamp(40px,12vh,68px);
-  }
-
-  .stop-button {
-    min-height:46px;
-    font-size:16px;
-  }
-
-  .preset {
-    min-height:32px;
-    font-size:11px;
+    grid-template-columns:220px 1fr;
+    gap:28px;
+    padding:20px 32px;
   }
 }
 
-/* Tablet / Desktop wide layout */
-@media (min-width: 768px) and (min-height: 601px) {
+/* Landscape mobile mode */
+@media(orientation:landscape) and (max-height:520px) {
+  .app {padding:6px}
+  .topbar {padding:6px 14px}
+  .brand h1 {font-size:18px}
+  .car-icon {font-size:20px}
+  .controls {padding:10px 20px;gap:20px}
+  .vertical-arrows {gap:8px}
+  .arrow-up,.arrow-down {width:84px;height:64px;font-size:38px}
+  .arrow-left,.arrow-right {width:110px;height:74px;font-size:42px}
   .bottom-bar {
-    grid-template-columns:240px 1fr;
-    align-items:center;
-    gap:28px;
-    padding:18px 32px;
+    grid-template-columns:170px 1fr;
+    padding:8px 16px;
+    gap:16px;
   }
-  .stop-button {
-    height:68px;
-    font-size:22px;
-  }
+  .stop-button {min-height:44px;font-size:16px}
+  .speed-labels,.footer {display:none}
+  .presets {margin-top:6px}
+  .preset {min-height:28px;font-size:11px}
 }
 </style>
 </head>
@@ -645,16 +562,13 @@ button {cursor:pointer}
         <h1>Robo<span>Racer</span></h1>
       </div>
 
-      <div class="status-group">
-        <div class="connection" id="connection">
-          <span class="connection-dot"></span>
-          <span id="statusText">READY</span>
-        </div>
-        <button type="button" class="fs-btn" id="fsBtn" aria-label="Fullscreen" title="Fullscreen">⛶</button>
+      <div class="connection" id="connection">
+        <span class="connection-dot"></span>
+        <span id="statusText">READY</span>
       </div>
     </header>
 
-    <main class="controls" id="padArea">
+    <main class="controls">
       <div class="vertical-arrows">
         <button type="button" class="arrow arrow-up" id="btnF"
           data-c="F" aria-label="Forward">↑</button>
@@ -688,6 +602,12 @@ button {cursor:pointer}
             aria-label="Motor speed">
         </div>
 
+        <div class="speed-labels">
+          <span>SLOW</span>
+          <span>MEDIUM</span>
+          <span>FAST</span>
+        </div>
+
         <div class="presets">
           <button type="button" class="preset" data-speed="100">LOW</button>
           <button type="button" class="preset selected" data-speed="170">MED</button>
@@ -695,6 +615,10 @@ button {cursor:pointer}
         </div>
       </div>
     </section>
+
+    <div class="footer">
+      Hold Forward/Backward + Tap Left/Right to steer
+    </div>
 
   </div>
 </div>
@@ -706,7 +630,6 @@ const connection = document.getElementById('connection');
 const statusText = document.getElementById('statusText');
 const slider = document.getElementById('speedSlider');
 const speedValue = document.getElementById('speedValue');
-const fsBtn = document.getElementById('fsBtn');
 
 const btnMap = {
   F: document.getElementById('btnF'),
@@ -715,10 +638,8 @@ const btnMap = {
   R: document.getElementById('btnR')
 };
 
-// Track touch state, mouse state, and keyboard state independently
-const touchState = { F: false, B: false, L: false, R: false };
-const keyState   = { F: false, B: false, L: false, R: false };
-let mouseDir = null;
+// Track whether each of the 4 buttons is currently held down
+const buttonState = { F: false, B: false, L: false, R: false };
 
 let activeCommand = 'S';
 let heartbeat = null;
@@ -808,29 +729,22 @@ function stopHeartbeat() {
   }
 }
 
+// Light up held buttons and prioritize steering (L/R) while held,
+// automatically returning to Forward/Backward (F/B) when L/R is released.
 function evaluateButtons() {
-  const isPressed = {
-    F: touchState.F || keyState.F || mouseDir === 'F',
-    B: touchState.B || keyState.B || mouseDir === 'B',
-    L: touchState.L || keyState.L || mouseDir === 'L',
-    R: touchState.R || keyState.R || mouseDir === 'R'
-  };
-
-  // Highlight all currently held buttons simultaneously
-  ['F', 'B', 'L', 'R'].forEach(k => {
-    btnMap[k].classList.toggle('active', isPressed[k]);
+  ['F', 'B', 'L', 'R'].forEach(key => {
+    btnMap[key].classList.toggle('active', buttonState[key]);
   });
 
-  // Steering (L/R) overrides while held; releasing L/R immediately resumes F or B
   let nextCmd = 'S';
 
-  if (isPressed.L && !isPressed.R) {
+  if (buttonState.L && !buttonState.R) {
     nextCmd = 'L';
-  } else if (isPressed.R && !isPressed.L) {
+  } else if (buttonState.R && !buttonState.L) {
     nextCmd = 'R';
-  } else if (isPressed.F && !isPressed.B) {
+  } else if (buttonState.F && !buttonState.B) {
     nextCmd = 'F';
-  } else if (isPressed.B && !isPressed.F) {
+  } else if (buttonState.B && !buttonState.F) {
     nextCmd = 'B';
   }
 
@@ -853,80 +767,66 @@ function stopAll() {
   commandGeneration++;
   stopGeneration++;
 
-  ['F', 'B', 'L', 'R'].forEach(k => {
-    touchState[k] = false;
-    keyState[k] = false;
-    btnMap[k].classList.remove('active');
-  });
-  mouseDir = null;
+  buttonState.F = false;
+  buttonState.B = false;
+  buttonState.L = false;
+  buttonState.R = false;
   activeCommand = 'S';
 
   stopHeartbeat();
+  ['F', 'B', 'L', 'R'].forEach(key => {
+    btnMap[key].classList.remove('active');
+  });
+
   sendCommand('S');
 }
 
-// Scan all active touches on the screen so multi-touch and thumb-sliding both work seamlessly
-function syncTouches(event) {
-  touchState.F = false;
-  touchState.B = false;
-  touchState.L = false;
-  touchState.R = false;
-
-  for (let i = 0; i < event.touches.length; i++) {
-    const t = event.touches[i];
-    const el = document.elementFromPoint(t.clientX, t.clientY);
-    if (el) {
-      const btn = el.closest('[data-c]');
-      if (btn && btn.dataset.c) {
-        touchState[btn.dataset.c] = true;
-      }
-    }
-  }
-
-  evaluateButtons();
-}
-
+// Independent per-button multi-touch listeners
 ['F', 'B', 'L', 'R'].forEach(dir => {
   const btn = btnMap[dir];
 
-  btn.addEventListener('touchstart', event => {
+  const handleTouch = event => {
     event.preventDefault();
-    syncTouches(event);
-  }, { passive: false });
+    buttonState[dir] = event.targetTouches.length > 0;
+    evaluateButtons();
+  };
 
-  btn.addEventListener('touchmove', event => {
-    event.preventDefault();
-    syncTouches(event);
-  }, { passive: false });
-
-  btn.addEventListener('touchend', event => {
-    event.preventDefault();
-    syncTouches(event);
-  }, { passive: false });
-
-  btn.addEventListener('touchcancel', event => {
-    event.preventDefault();
-    syncTouches(event);
-  }, { passive: false });
+  btn.addEventListener('touchstart', handleTouch, { passive: false });
+  btn.addEventListener('touchend', handleTouch, { passive: false });
+  btn.addEventListener('touchcancel', handleTouch, { passive: false });
 
   // Desktop mouse support
   btn.addEventListener('mousedown', event => {
     event.preventDefault();
-    mouseDir = dir;
+    buttonState[dir] = true;
     evaluateButtons();
+  });
+
+  btn.addEventListener('mouseup', () => {
+    if (buttonState[dir]) {
+      buttonState[dir] = false;
+      evaluateButtons();
+    }
+  });
+
+  btn.addEventListener('mouseleave', () => {
+    if (buttonState[dir]) {
+      buttonState[dir] = false;
+      evaluateButtons();
+    }
   });
 
   btn.addEventListener('contextmenu', event => event.preventDefault());
 });
 
-window.addEventListener('mouseup', () => {
-  if (mouseDir !== null) {
-    mouseDir = null;
-    evaluateButtons();
+// Safety check: if all fingers leave the screen, make sure everything stops
+window.addEventListener('touchend', event => {
+  if (event.touches && event.touches.length === 0 && activeCommand !== 'S') {
+    stopAll();
   }
 });
 
-// Keyboard support (Hold W/Up + A/Left or D/Right together)
+// Keyboard support (Hold W/Up + A/Left or D/Right at the same time)
 const keyToDir = {
   ArrowUp: 'F', KeyW: 'F',
   ArrowDown: 'B', KeyS: 'B',
@@ -941,18 +841,18 @@ window.addEventListener('keydown', event => {
     return;
   }
   const dir = keyToDir[event.code];
-  if (dir && !keyState[dir]) {
+  if (dir && !buttonState[dir]) {
     event.preventDefault();
-    keyState[dir] = true;
+    buttonState[dir] = true;
     evaluateButtons();
   }
 });
 
 window.addEventListener('keyup', event => {
   const dir = keyToDir[event.code];
-  if (dir && keyState[dir]) {
+  if (dir && buttonState[dir]) {
     event.preventDefault();
-    keyState[dir] = false;
+    buttonState[dir] = false;
     evaluateButtons();
   }
 });
@@ -992,16 +892,6 @@ document.querySelectorAll('[data-speed]').forEach(button => {
     slider.value = button.dataset.speed;
     updateSpeed(button.dataset.speed);
   });
-});
-
-// Fullscreen toggle for mobile browsers
-fsBtn.addEventListener('click', () => {
-  const docEl = document.documentElement;
-  if (!document.fullscreenElement) {
-    if (docEl.requestFullscreen) docEl.requestFullscreen().catch(() => {});
-  } else {
-    if (document.exitFullscreen) document.exitFullscreen().catch(() => {});
-  }
 });
 
 // Stop if the browser tab loses focus.
