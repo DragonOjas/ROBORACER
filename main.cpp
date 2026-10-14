@@ -13,8 +13,8 @@
 //
 // L298N GND and ESP8266 GND must be connected.
 // Use a suitable external supply for the motors.
+// The controller uses /drive?l=...&r=... for differential steering.
 
-// ---------------- MOTOR PINS -----------------------
 #define ENA 13
 #define IN1 5
 #define IN2 4
@@ -82,21 +82,13 @@ void applyCommand() {
   int s = constrain(motorSpeed, 0, 255);
 
   switch (currentCommand) {
-    case 'F':
-      setMotors(s, s);
-      break;
+    case 'F': setMotors(s, s); break;
+    case 'B': setMotors(-s, -s); break;
+    case 'L': setMotors(-s, s); break;
+    case 'R': setMotors(s, -s); break;
 
-    case 'B':
-      setMotors(-s, -s);
-      break;
-
-    case 'L':
-      setMotors(-s, s);
-      break;
-
-    case 'R':
-      setMotors(s, -s);
-      break;
+    // Direct differential drive uses /drive.
+    case 'D': break;
 
     default:
       currentCommand = 'S';
@@ -176,7 +168,69 @@ void handleSpeed() {
   server.send(200, "text/plain", "Speed updated");
 }
 
-// ---------------- WEBPAGE --------------------------
+// ---------------- DIRECT DIFFERENTIAL DRIVE --------
+void handleDrive() {
+  if (!server.hasArg("l") || !server.hasArg("r")) {
+    server.send(400, "text/plain", "Missing motor output");
+    return;
+  }
+
+  String leftValue = server.arg("l");
+  String rightValue = server.arg("r");
+
+  if (leftValue.length() == 0 || rightValue.length() == 0 ||
+      leftValue.length() > 4 || rightValue.length() > 4) {
+    server.send(400, "text/plain", "Invalid motor output");
+    return;
+  }
+
+  // Validate optional minus sign and digits.
+  auto isIntegerText = [](const String& value) -> bool {
+    unsigned int start =
+      (value.length() > 0 && value.charAt(0) == '-') ? 1 : 0;
+
+    if (start == value.length()) return false;
+
+    for (unsigned int i = start; i < value.length(); i++) {
+      if (value.charAt(i) < '0' ||
+          value.charAt(i) > '9') {
+        return false;
+      }
+    }
+
+    return true;
+  };
+
+  if (!isIntegerText(leftValue) ||
+      !isIntegerText(rightValue)) {
+    server.send(400, "text/plain", "Motor outputs must be integers");
+    return;
+  }
+
+  int left = leftValue.toInt();
+  int right = rightValue.toInt();
+
+  if (left < -255 || left > 255 ||
+      right < -255 || right > 255) {
+    server.send(400, "text/plain",
+                "Motor outputs must be -255..255");
+    return;
+  }
+
+  setMotors(left, right);
+
+  currentCommand =
+    (left == 0 && right == 0) ? 'S' : 'D';
+
+  lastCommandTime = millis();
+
+  server.send(200, "text/plain", "Drive updated");
+}
+
+// ==================================================
+// WEB CONTROLLER
+// ==================================================
+
 const char webpage[] PROGMEM = R"rawliteral(
 <!DOCTYPE html>
 <html lang="en">
@@ -190,12 +244,14 @@ const char webpage[] PROGMEM = R"rawliteral(
 :root {
   --bg:#0b0e15;
   --panel:#111722;
-  --border:#202b3d;
+  --panel2:#151e2c;
+  --border:#263248;
   --blue:#1678ff;
-  --blue-light:#75b4ff;
+  --blue2:#75b4ff;
   --text:#f5f7ff;
   --muted:#9baac1;
   --red:#f21c3b;
+  --green:#3ddc97;
 }
 
 * {
@@ -208,7 +264,6 @@ const char webpage[] PROGMEM = R"rawliteral(
 
 html,body {
   margin:0;
-  padding:0;
   min-height:100%;
   background:var(--bg);
   overscroll-behavior:none;
@@ -216,7 +271,10 @@ html,body {
 
 body {
   min-height:100vh;
-  background:radial-gradient(ellipse at 50% 0%,#172131,transparent 65%),var(--bg);
+  min-height:100dvh;
+  background:radial-gradient(
+    ellipse at 50% 0%,#172131,transparent 65%
+  ),var(--bg);
   color:var(--text);
   font-family:Arial,Helvetica,sans-serif;
   display:flex;
@@ -224,8 +282,20 @@ body {
   justify-content:center;
 }
 
-button,input {font:inherit}
-button {cursor:pointer}
+button,input,select {
+  font:inherit;
+}
+
+button {
+  cursor:pointer;
+}
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible {
+  outline:2px solid var(--blue2);
+  outline-offset:3px;
+}
 
 .app {
   width:100%;
@@ -244,12 +314,12 @@ button {cursor:pointer}
 }
 
 .topbar {
-  padding:12px 16px;
+  padding:12px 14px;
   border-bottom:1px solid var(--border);
   display:flex;
   align-items:center;
   justify-content:space-between;
-  gap:12px;
+  gap:10px;
   flex-wrap:wrap;
 }
 
@@ -271,39 +341,134 @@ button {cursor:pointer}
   letter-spacing:-1px;
 }
 
-.brand h1 span {color:var(--blue)}
+.brand h1 span {
+  color:var(--blue);
+}
+
+.top-actions {
+  display:flex;
+  align-items:center;
+  gap:10px;
+}
 
 .connection {
   display:flex;
   align-items:center;
-  gap:8px;
+  gap:7px;
   color:var(--muted);
-  font-size:12px;
+  font-size:11px;
   font-weight:800;
-  letter-spacing:.6px;
+  letter-spacing:.5px;
 }
 
 .connection-dot {
-  width:10px;
-  height:10px;
+  width:9px;
+  height:9px;
   flex-shrink:0;
   border-radius:50%;
   background:#8792a5;
 }
 
 .connection.online .connection-dot {
-  background:var(--blue);
-  box-shadow:0 0 12px #1678ff99;
+  background:var(--green);
+  box-shadow:0 0 10px #3ddc9780;
 }
 
 .connection.error .connection-dot {
   background:var(--red);
-  box-shadow:0 0 12px #f21c3b88;
+  box-shadow:0 0 10px #f21c3b88;
 }
 
-/* Touch-Friendly Dual-Thumb Controls */
+.icon-button {
+  height:38px;
+  min-width:38px;
+  padding:0 11px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  gap:7px;
+  border:1px solid #344158;
+  border-radius:11px;
+  background:#1a2434;
+  color:#e8efff;
+  font-size:13px;
+  font-weight:800;
+}
+
+.icon-button:active {
+  transform:scale(.97);
+}
+
+.status-strip {
+  display:grid;
+  grid-template-columns:repeat(3,1fr);
+  gap:8px;
+  padding:10px 12px 0;
+}
+
+.stat {
+  min-width:0;
+  background:#101722;
+  border:1px solid #202b3d;
+  border-radius:11px;
+  padding:9px 10px;
+}
+
+.stat-label {
+  font-size:9px;
+  letter-spacing:.8px;
+  font-weight:900;
+  color:#8494ad;
+}
+
+.stat-value {
+  margin-top:4px;
+  font-size:15px;
+  font-weight:900;
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+
+.stat-value.blue {
+  color:var(--blue2);
+}
+
+.mode-row {
+  padding:12px 12px 0;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:8px;
+}
+
+.section-label {
+  font-size:10px;
+  font-weight:900;
+  letter-spacing:1px;
+  color:var(--muted);
+}
+
+.mode-chip {
+  border:1px solid #344158;
+  background:#1a2434;
+  color:#dce6f7;
+  border-radius:9px;
+  padding:7px 10px;
+  font-size:10px;
+  font-weight:900;
+}
+
+.mode-chip.active {
+  background:#155ac0;
+  border-color:#3288ff;
+  color:white;
+}
+
+/* Classic arrow controls */
+
 .controls {
-  padding:18px 12px;
+  padding:16px 12px;
   display:grid;
   grid-template-columns:1fr 1.35fr;
   align-items:center;
@@ -317,7 +482,7 @@ button {cursor:pointer}
   display:flex;
   flex-direction:column;
   align-items:center;
-  gap:14px;
+  gap:12px;
   touch-action:none;
 }
 
@@ -326,7 +491,7 @@ button {cursor:pointer}
   display:flex;
   align-items:center;
   justify-content:center;
-  gap:12px;
+  gap:10px;
   touch-action:none;
 }
 
@@ -342,19 +507,20 @@ button {cursor:pointer}
   box-shadow:0 5px 0 #070b12,inset 0 1px 0 #ffffff12;
   touch-action:none;
   transition:background .06s,color .06s,transform .06s,box-shadow .06s;
+  position:relative;
 }
 
 .arrow-up,.arrow-down {
   width:92px;
-  height:88px;
-  font-size:48px;
+  height:82px;
+  font-size:46px;
   line-height:1;
 }
 
 .arrow-left,.arrow-right {
   width:96px;
-  height:88px;
-  font-size:48px;
+  height:82px;
+  font-size:46px;
   line-height:1;
 }
 
@@ -365,6 +531,8 @@ button {cursor:pointer}
   box-shadow:0 0 0 3px #1678ff25,0 0 25px #1678ff4a;
   transform:translateY(3px);
 }
+
+/* STOP and speed controls */
 
 .bottom-bar {
   border-top:1px solid var(--border);
@@ -399,8 +567,8 @@ button {cursor:pointer}
 }
 
 .stop-square {
-  width:16px;
-  height:16px;
+  width:15px;
+  height:15px;
   background:white;
   border-radius:3px;
 }
@@ -420,19 +588,21 @@ button {cursor:pointer}
 
 .speed-title {
   color:var(--muted);
-  font-size:13px;
+  font-size:12px;
   font-weight:900;
   letter-spacing:.6px;
 }
 
 .speed-number {
-  color:var(--blue-light);
+  color:var(--blue2);
   font-size:22px;
   font-weight:900;
   font-variant-numeric:tabular-nums;
 }
 
-.slider-wrap {padding:4px 0 6px}
+.slider-wrap {
+  padding:4px 0 6px;
+}
 
 #speedSlider {
   display:block;
@@ -451,8 +621,8 @@ button {cursor:pointer}
 #speedSlider::-webkit-slider-thumb {
   appearance:none;
   -webkit-appearance:none;
-  width:28px;
-  height:28px;
+  width:27px;
+  height:27px;
   border-radius:50%;
   background:var(--blue);
   border:2px solid #4095ff;
@@ -460,8 +630,8 @@ button {cursor:pointer}
 }
 
 #speedSlider::-moz-range-thumb {
-  width:26px;
-  height:26px;
+  width:25px;
+  height:25px;
   border-radius:50%;
   background:var(--blue);
   border:2px solid #4095ff;
@@ -499,7 +669,9 @@ button {cursor:pointer}
   color:white;
 }
 
-.preset:active {transform:scale(.97)}
+.preset:active {
+  transform:scale(.97);
+}
 
 .footer {
   padding:0 12px 10px;
@@ -508,138 +680,604 @@ button {cursor:pointer}
   font-size:11px;
 }
 
-/* Very small phones */
+/* Joystick layouts */
+
+.joystick-layout {
+  display:none;
+  padding:16px 12px 20px;
+  gap:20px;
+  align-items:center;
+  justify-content:space-evenly;
+  min-height:250px;
+  touch-action:none;
+}
+
+.joystick-layout.visible {
+  display:flex;
+}
+
+.stick-column {
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  gap:10px;
+}
+
+.stick-label {
+  color:var(--muted);
+  font-size:10px;
+  font-weight:900;
+  letter-spacing:1px;
+}
+
+.stick-pad {
+  width:clamp(145px,35vw,220px);
+  height:clamp(145px,35vw,220px);
+  border-radius:50%;
+  border:2px solid #344158;
+  background:radial-gradient(circle at 35% 25%,#202c40,#101722 70%);
+  box-shadow:inset 0 0 25px #0008,0 8px 22px #0004;
+  position:relative;
+  touch-action:none;
+  overflow:hidden;
+}
+
+.stick-pad:before,.stick-pad:after {
+  content:"";
+  position:absolute;
+  background:#34415855;
+}
+
+.stick-pad:before {
+  width:1px;
+  height:100%;
+  left:50%;
+  top:0;
+}
+
+.stick-pad:after {
+  height:1px;
+  width:100%;
+  top:50%;
+  left:0;
+}
+
+.stick-knob {
+  width:34%;
+  height:34%;
+  position:absolute;
+  left:50%;
+  top:50%;
+  transform:translate(-50%,-50%);
+  border-radius:50%;
+  border:2px solid #75b4ff;
+  background:linear-gradient(145deg,#348cff,#1052b5);
+  box-shadow:0 0 22px #1678ff66;
+  pointer-events:none;
+}
+
+.stick-hint {
+  font-size:10px;
+  color:#75859c;
+  text-align:center;
+}
+
+.layout-hidden {
+  display:none!important;
+}
+
+/* Settings dialog */
+
+.modal-backdrop {
+  position:fixed;
+  inset:0;
+  z-index:50;
+  background:#03060bd9;
+  display:none;
+  align-items:center;
+  justify-content:center;
+  padding:16px;
+  overflow:auto;
+}
+
+.modal-backdrop.open {
+  display:flex;
+}
+
+.settings-panel {
+  width:100%;
+  max-width:490px;
+  max-height:calc(100dvh - 32px);
+  overflow:auto;
+  border:1px solid #2b3950;
+  border-radius:20px;
+  background:linear-gradient(145deg,#151d2a,#0c111a);
+  box-shadow:0 25px 80px #000a;
+  padding:18px;
+}
+
+.settings-header {
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  margin-bottom:5px;
+}
+
+.settings-header h2 {
+  font-size:21px;
+  margin:0;
+  letter-spacing:-.5px;
+}
+
+.settings-subtitle {
+  font-size:12px;
+  color:var(--muted);
+  margin:0 0 17px;
+}
+
+.close-button {
+  width:34px;
+  height:34px;
+  border:1px solid #344158;
+  border-radius:10px;
+  background:#202a3a;
+  color:#e8efff;
+  font-size:21px;
+}
+
+.setting-block {
+  border:1px solid #263248;
+  border-radius:13px;
+  background:#101722;
+  padding:13px;
+  margin-top:11px;
+}
+
+.setting-title {
+  font-size:12px;
+  font-weight:900;
+  color:#eaf0ff;
+  margin-bottom:4px;
+}
+
+.setting-description {
+  font-size:11px;
+  line-height:1.45;
+  color:#91a0b7;
+  margin-bottom:10px;
+}
+
+.layout-options {
+  display:grid;
+  grid-template-columns:1fr;
+  gap:7px;
+}
+
+.layout-option {
+  display:flex;
+  align-items:center;
+  gap:10px;
+  border:1px solid #344158;
+  border-radius:10px;
+  padding:10px;
+  background:#182231;
+  color:#dce6f7;
+  font-size:12px;
+  font-weight:700;
+}
+
+.layout-option input {
+  accent-color:var(--blue);
+  width:16px;
+  height:16px;
+}
+
+.sensitivity-row {
+  display:grid;
+  grid-template-columns:1fr auto;
+  align-items:center;
+  gap:10px;
+  margin-top:12px;
+}
+
+.sensitivity-row label {
+  font-size:12px;
+  color:#dce6f7;
+  font-weight:800;
+}
+
+.sensitivity-value {
+  font-size:12px;
+  color:var(--blue2);
+  font-weight:900;
+  font-variant-numeric:tabular-nums;
+}
+
+.sensitivity-slider {
+  grid-column:1/-1;
+  width:100%;
+  accent-color:var(--blue);
+  touch-action:pan-y;
+}
+
+.setting-actions {
+  display:flex;
+  gap:8px;
+  margin-top:14px;
+}
+
+.setting-actions button {
+  flex:1;
+  min-height:40px;
+  border-radius:10px;
+  border:1px solid #344158;
+  background:#1a2434;
+  color:#e8efff;
+  font-size:12px;
+  font-weight:900;
+}
+
+.setting-actions .primary {
+  background:#155ac0;
+  border-color:#3288ff;
+}
+
+.always-on {
+  display:flex;
+  align-items:center;
+  gap:10px;
+}
+
+.always-on .checkmark {
+  width:23px;
+  height:23px;
+  flex-shrink:0;
+  display:grid;
+  place-items:center;
+  background:#155ac0;
+  border-radius:7px;
+  color:#fff;
+  font-weight:900;
+}
+
+.always-on strong {
+  font-size:12px;
+  display:block;
+}
+
+.always-on small {
+  display:block;
+  color:#91a0b7;
+  font-size:11px;
+  line-height:1.4;
+  margin-top:3px;
+}
+
+.modal-note {
+  font-size:10px;
+  line-height:1.5;
+  color:#75859c;
+  margin:12px 2px 0;
+}
+
+/* Small phones */
+
 @media(max-width:370px) {
   .controls {padding:14px 8px;gap:8px}
-  .arrow-up,.arrow-down {width:78px;height:76px;font-size:42px}
-  .arrow-left,.arrow-right {width:80px;height:76px;font-size:42px}
-  .horizontal-arrows {gap:8px}
+  .arrow-up,.arrow-down {width:76px;height:72px;font-size:40px}
+  .arrow-left,.arrow-right {width:78px;height:72px;font-size:40px}
+  .horizontal-arrows {gap:7px}
+  .status-strip {padding-left:8px;padding-right:8px;gap:5px}
+  .stat {padding:8px}
+  .stat-value {font-size:13px}
+  .topbar {padding:10px}
+  .brand h1 {font-size:20px}
 }
 
-/* Larger tablets & desktops */
+/* Tablets and desktops */
+
 @media(min-width:650px) {
   .app {padding:20px}
-  .controls {padding:32px 40px;gap:30px}
-  .arrow-up,.arrow-down {width:125px;height:120px;font-size:68px}
-  .arrow-left,.arrow-right {width:150px;height:115px;font-size:68px}
-  .bottom-bar {
-    grid-template-columns:220px 1fr;
-    gap:28px;
-    padding:20px 32px;
-  }
+  .controls {padding:28px 40px;gap:30px}
+  .arrow-up,.arrow-down {width:125px;height:112px;font-size:64px}
+  .arrow-left,.arrow-right {width:145px;height:112px;font-size:64px}
+  .bottom-bar {grid-template-columns:210px 1fr;gap:28px;padding:20px 32px}
+  .joystick-layout {padding:25px}
+  .status-strip {padding:14px 20px 0}
+  .mode-row {padding:14px 20px 0}
 }
 
-/* Landscape mobile mode */
+/* Landscape phones */
+
 @media(orientation:landscape) and (max-height:520px) {
-  .app {padding:6px}
-  .topbar {padding:6px 14px}
+  body {align-items:flex-start}
+  .app {padding:5px;max-width:900px}
+  .topbar {padding:5px 12px}
   .brand h1 {font-size:18px}
   .car-icon {font-size:20px}
-  .controls {padding:10px 20px;gap:20px}
-  .vertical-arrows {gap:8px}
-  .arrow-up,.arrow-down {width:84px;height:64px;font-size:38px}
-  .arrow-left,.arrow-right {width:110px;height:74px;font-size:42px}
-  .bottom-bar {
-    grid-template-columns:170px 1fr;
-    padding:8px 16px;
-    gap:16px;
-  }
-  .stop-button {min-height:44px;font-size:16px}
+  .status-strip {padding-top:5px}
+  .stat {padding:5px 8px}
+  .stat-value {font-size:12px;margin-top:2px}
+  .mode-row {padding-top:5px}
+  .controls {padding:7px 20px;gap:20px}
+  .vertical-arrows {gap:7px}
+  .arrow-up,.arrow-down {width:78px;height:54px;font-size:34px}
+  .arrow-left,.arrow-right {width:95px;height:62px;font-size:36px}
+  .bottom-bar {grid-template-columns:150px 1fr;padding:6px 14px;gap:14px}
+  .stop-button {min-height:40px;font-size:15px}
   .speed-labels,.footer {display:none}
-  .presets {margin-top:6px}
-  .preset {min-height:28px;font-size:11px}
+  .presets {margin-top:5px}
+  .preset {min-height:27px;font-size:11px}
+  .joystick-layout {min-height:170px;padding:8px}
+  .stick-pad {width:145px;height:145px}
+  .settings-panel {max-height:calc(100dvh - 12px);padding:12px}
 }
 </style>
 </head>
 
 <body>
 <div class="app">
-  <div class="controller">
+<div class="controller">
 
-    <header class="topbar">
-      <div class="brand">
-        <div class="car-icon">🏎️</div>
-        <h1>Robo<span>Racer</span></h1>
-      </div>
+  <header class="topbar">
+    <div class="brand">
+      <div class="car-icon">🏎️</div>
+      <h1>Robo<span>Racer</span></h1>
+    </div>
 
+    <div class="top-actions">
       <div class="connection" id="connection">
         <span class="connection-dot"></span>
         <span id="statusText">READY</span>
       </div>
-    </header>
 
-    <main class="controls">
-      <div class="vertical-arrows">
-        <button type="button" class="arrow arrow-up" id="btnF"
-          data-c="F" aria-label="Forward">↑</button>
-        <button type="button" class="arrow arrow-down" id="btnB"
-          data-c="B" aria-label="Backward">↓</button>
-      </div>
-
-      <div class="horizontal-arrows">
-        <button type="button" class="arrow arrow-left" id="btnL"
-          data-c="L" aria-label="Left">←</button>
-        <button type="button" class="arrow arrow-right" id="btnR"
-          data-c="R" aria-label="Right">→</button>
-      </div>
-    </main>
-
-    <section class="bottom-bar">
-      <button type="button" class="stop-button" id="stopButton">
-        <span class="stop-square"></span>
-        STOP
+      <button type="button" class="icon-button"
+              id="settingsButton" aria-label="Open settings">
+        ⚙ <span>SETTINGS</span>
       </button>
+    </div>
+  </header>
 
-      <div class="speed-area">
-        <div class="speed-heading">
-          <span class="speed-title">SPEED</span>
-          <span class="speed-number" id="speedValue">170</span>
-        </div>
-
-        <div class="slider-wrap">
-          <input id="speedSlider" type="range"
-            min="0" max="255" value="170"
-            aria-label="Motor speed">
-        </div>
-
-        <div class="speed-labels">
-          <span>SLOW</span>
-          <span>MEDIUM</span>
-          <span>FAST</span>
-        </div>
-
-        <div class="presets">
-          <button type="button" class="preset" data-speed="100">LOW</button>
-          <button type="button" class="preset selected" data-speed="170">MED</button>
-          <button type="button" class="preset" data-speed="255">MAX</button>
-        </div>
-      </div>
-    </section>
-
-    <div class="footer">
-      Hold Forward/Backward + Tap Left/Right to steer
+  <section class="status-strip" aria-label="Controller status">
+    <div class="stat">
+      <div class="stat-label">DRIVE STATE</div>
+      <div class="stat-value" id="driveState">STOPPED</div>
     </div>
 
+    <div class="stat">
+      <div class="stat-label">OUTPUT</div>
+      <div class="stat-value blue" id="outputValue">170 / 255</div>
+    </div>
+
+    <div class="stat">
+      <div class="stat-label">CONTROL MODE</div>
+      <div class="stat-value" id="currentLayout">ARROWS</div>
+    </div>
+  </section>
+
+  <div class="mode-row">
+    <span class="section-label">QUICK SPEED</span>
+    <span class="section-label" id="sensitivitySummary">
+      STEERING L 100% · R 100%
+    </span>
   </div>
+
+  <main class="controls" id="classicControls">
+    <div class="vertical-arrows">
+      <button type="button" class="arrow arrow-up"
+              data-c="F" id="btnF" aria-label="Forward">↑</button>
+
+      <button type="button" class="arrow arrow-down"
+              data-c="B" id="btnB" aria-label="Backward">↓</button>
+    </div>
+
+    <div class="horizontal-arrows">
+      <button type="button" class="arrow arrow-left"
+              data-c="L" id="btnL" aria-label="Left">←</button>
+
+      <button type="button" class="arrow arrow-right"
+              data-c="R" id="btnR" aria-label="Right">→</button>
+    </div>
+  </main>
+
+  <section class="joystick-layout" id="singleJoystickLayout"
+           aria-label="Virtual joystick">
+    <div class="stick-column">
+      <div class="stick-label">THROTTLE + STEERING</div>
+
+      <div class="stick-pad" id="singlePad" data-stick="single">
+        <div class="stick-knob" id="singleKnob"></div>
+      </div>
+
+      <div class="stick-hint">
+        Drag up/down to drive · left/right to steer
+      </div>
+    </div>
+  </section>
+
+  <section class="joystick-layout" id="dualJoystickLayout"
+           aria-label="Dual-stick controller">
+    <div class="stick-column">
+      <div class="stick-label">THROTTLE</div>
+
+      <div class="stick-pad" id="throttlePad" data-stick="throttle">
+        <div class="stick-knob" id="throttleKnob"></div>
+      </div>
+
+      <div class="stick-hint">Up: forward · Down: reverse</div>
+    </div>
+
+    <div class="stick-column">
+      <div class="stick-label">STEERING</div>
+
+      <div class="stick-pad" id="steeringPad" data-stick="steering">
+        <div class="stick-knob" id="steeringKnob"></div>
+      </div>
+
+      <div class="stick-hint">Left and right steering</div>
+    </div>
+  </section>
+
+  <section class="bottom-bar">
+    <button type="button" class="stop-button" id="stopButton">
+      <span class="stop-square"></span>STOP
+    </button>
+
+    <div class="speed-area">
+      <div class="speed-heading">
+        <span class="speed-title">MOTOR OUTPUT LIMIT</span>
+        <span class="speed-number" id="speedValue">170</span>
+      </div>
+
+      <div class="slider-wrap">
+        <input id="speedSlider" type="range"
+               min="0" max="255" value="170"
+               aria-label="Motor output limit">
+      </div>
+
+      <div class="speed-labels">
+        <span>SLOW</span>
+        <span>MEDIUM</span>
+        <span>FAST</span>
+      </div>
+
+      <div class="presets">
+        <button type="button" class="preset" data-speed="100">LOW</button>
+        <button type="button" class="preset selected" data-speed="170">MED</button>
+        <button type="button" class="preset" data-speed="255">MAX</button>
+      </div>
+    </div>
+  </section>
+
+  <div class="footer">
+    Hold controls to drive · slide between arrows without lifting · Space = STOP
+  </div>
+
+</div>
+</div>
+
+<!-- SETTINGS MODAL -->
+
+<div class="modal-backdrop" id="settingsBackdrop"
+     role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+
+  <section class="settings-panel">
+    <div class="settings-header">
+      <h2 id="settingsTitle">Controller settings</h2>
+      <button type="button" class="close-button"
+              id="closeSettings" aria-label="Close settings">×</button>
+    </div>
+
+    <p class="settings-subtitle">
+      Personalize the way RoboRacer responds.
+    </p>
+
+    <div class="setting-block">
+      <div class="setting-title">CONTROL LAYOUT</div>
+
+      <div class="setting-description">
+        Choose how you control the car. Your choice is saved on this browser.
+      </div>
+
+      <div class="layout-options">
+        <label class="layout-option">
+          <input type="radio" name="controlLayout" value="classic">
+          <span>Classic arrows</span>
+        </label>
+
+        <label class="layout-option">
+          <input type="radio" name="controlLayout" value="joystick">
+          <span>Virtual joystick</span>
+        </label>
+
+        <label class="layout-option">
+          <input type="radio" name="controlLayout" value="dual">
+          <span>Dual-stick controller</span>
+        </label>
+      </div>
+    </div>
+
+    <div class="setting-block">
+      <div class="setting-title">STEERING SENSITIVITY</div>
+
+      <div class="setting-description">
+        Tune left and right turns independently.
+        100% is the default; lower values make that turn gentler.
+      </div>
+
+      <div class="sensitivity-row">
+        <label for="leftSensitivity">Left turn (←)</label>
+        <output class="sensitivity-value" id="leftSensitivityValue">100%</output>
+
+        <input class="sensitivity-slider" id="leftSensitivity"
+               type="range" min="25" max="150" step="5" value="100">
+      </div>
+
+      <div class="sensitivity-row">
+        <label for="rightSensitivity">Right turn (→)</label>
+        <output class="sensitivity-value" id="rightSensitivityValue">100%</output>
+
+        <input class="sensitivity-slider" id="rightSensitivity"
+               type="range" min="25" max="150" step="5" value="100">
+      </div>
+    </div>
+
+    <div class="setting-block">
+      <div class="always-on">
+        <span class="checkmark">✓</span>
+
+        <div>
+          <strong>Slide between buttons — ALWAYS ON</strong>
+          <small>
+            Slide directly from ← to → or between any arrow buttons
+            without lifting your finger. This behavior cannot be disabled.
+          </small>
+        </div>
+      </div>
+    </div>
+
+    <div class="setting-actions">
+      <button type="button" id="resetSettings">RESET DEFAULTS</button>
+      <button type="button" class="primary" id="doneSettings">DONE</button>
+    </div>
+
+    <p class="modal-note">
+      Steering sensitivity affects turn strength in all layouts.
+      It is a software control setting, not a measurement of actual
+      wheel angle or motor RPM.
+    </p>
+  </section>
 </div>
 
 <script>
-'use strict';
+const $ = id => document.getElementById(id);
 
-const connection = document.getElementById('connection');
-const statusText = document.getElementById('statusText');
-const slider = document.getElementById('speedSlider');
-const speedValue = document.getElementById('speedValue');
+const connection = $('connection');
+const statusText = $('statusText');
+const slider = $('speedSlider');
+const speedValue = $('speedValue');
+const driveState = $('driveState');
+const outputValue = $('outputValue');
+const currentLayoutLabel = $('currentLayout');
+const sensitivitySummary = $('sensitivitySummary');
 
 const btnMap = {
-  F: document.getElementById('btnF'),
-  B: document.getElementById('btnB'),
-  L: document.getElementById('btnL'),
-  R: document.getElementById('btnR')
+  F: $('btnF'),
+  B: $('btnB'),
+  L: $('btnL'),
+  R: $('btnR')
 };
 
-// Track whether each of the 4 buttons is currently held down
-const buttonState = { F: false, B: false, L: false, R: false };
+const buttonState = { F:false, B:false, L:false, R:false };
+const keyboardState = { F:false, B:false, L:false, R:false };
+const pointerActions = new Map();
+
+const stickState = {
+  single: { x:0, y:0 },
+  throttle: { x:0, y:0 },
+  steering: { x:0, y:0 }
+};
 
 let activeCommand = 'S';
 let heartbeat = null;
@@ -647,23 +1285,47 @@ let speedTimer = null;
 let speed = 170;
 let requestChain = Promise.resolve();
 let commandGeneration = 0;
-let stopGeneration = 0;
+let lastDrive = { l:0, r:0 };
+
+let settings = {
+  layout:'classic',
+  leftSensitivity:100,
+  rightSensitivity:100
+};
+
+const DEFAULT_SETTINGS = {
+  layout:'classic',
+  leftSensitivity:100,
+  rightSensitivity:100
+};
+
+// ---------------- STATUS ---------------------------
 
 function setStatus(state, text) {
   connection.classList.remove('online', 'error');
 
-  if (state === 'online') connection.classList.add('online');
-  if (state === 'error') connection.classList.add('error');
+  if (state === 'online') {
+    connection.classList.add('online');
+  }
+
+  if (state === 'error') {
+    connection.classList.add('error');
+  }
 
   statusText.textContent = text;
 }
 
-// Keep requests ordered so STOP follows older movement requests.
-function enqueueRequest(path) {
+// ---------------- REQUEST QUEUE -------------------
+
+function enqueueRequest(path, generation, allowStale) {
   const task = requestChain.then(async () => {
+    if (!allowStale && generation !== commandGeneration) {
+      return null;
+    }
+
     const response = await fetch(path, {
-      method: 'GET',
-      cache: 'no-store'
+      method:'GET',
+      cache:'no-store'
     });
 
     if (!response.ok) {
@@ -677,47 +1339,59 @@ function enqueueRequest(path) {
   return task;
 }
 
-function sendCommand(command) {
-  const generation = commandGeneration;
-  const thisStopGeneration = stopGeneration;
+// ---------------- MOTOR OUTPUT ---------------------
 
-  enqueueRequest('/cmd?c=' + command)
-    .then(() => {
-      if (generation === commandGeneration &&
-          thisStopGeneration === stopGeneration) {
+function sendDrive(left, right, forceStop) {
+  const generation = commandGeneration;
+
+  const l = Math.max(-255, Math.min(255, Math.round(left)));
+  const r = Math.max(-255, Math.min(255, Math.round(right)));
+
+  lastDrive = { l, r };
+
+  activeCommand = (l === 0 && r === 0) ? 'S' : 'D';
+
+  driveState.textContent =
+    activeCommand === 'S' ? 'STOPPED' :
+    activeCommand === 'D' ? 'MOVING' : 'STOPPED';
+
+  const path = '/drive?l=' + l + '&r=' + r;
+
+  enqueueRequest(path, generation, !!forceStop)
+    .then(response => {
+      if (response && generation === commandGeneration) {
         setStatus('online', 'CONNECTED');
       }
     })
     .catch(() => {
-      if (generation === commandGeneration &&
-          thisStopGeneration === stopGeneration) {
+      if (generation === commandGeneration) {
         setStatus('error', 'CONNECTION ERROR');
       }
     });
 }
 
-function sendSpeed(value) {
+function sendLegacyStop() {
   const generation = commandGeneration;
 
-  enqueueRequest('/speed?v=' + value)
-    .then(() => {
-      if (generation === commandGeneration) {
+  enqueueRequest('/cmd?c=S', generation, true)
+    .then(response => {
+      if (response) {
         setStatus('online', 'CONNECTED');
       }
     })
     .catch(() => {
-      if (generation === commandGeneration) {
-        setStatus('error', 'SPEED ERROR');
-      }
+      setStatus('error', 'CONNECTION ERROR');
     });
 }
+
+// ---------------- HEARTBEAT -----------------------
 
 function startHeartbeat() {
   if (heartbeat !== null) return;
 
   heartbeat = setInterval(() => {
     if (activeCommand !== 'S') {
-      sendCommand(activeCommand);
+      sendDrive(lastDrive.l, lastDrive.r);
     }
   }, 300);
 }
@@ -729,109 +1403,356 @@ function stopHeartbeat() {
   }
 }
 
-// Light up held buttons and prioritize steering (L/R) while held,
-// automatically returning to Forward/Backward (F/B) when L/R is released.
-function evaluateButtons() {
-  ['F', 'B', 'L', 'R'].forEach(key => {
-    btnMap[key].classList.toggle('active', buttonState[key]);
-  });
+// ---------------- STEERING MIXER -------------------
 
-  let nextCmd = 'S';
+function normalizeAxes(throttle, steering) {
+  throttle = Math.max(-1, Math.min(1, throttle));
+  steering = Math.max(-1, Math.min(1, steering));
 
-  if (buttonState.L && !buttonState.R) {
-    nextCmd = 'L';
-  } else if (buttonState.R && !buttonState.L) {
-    nextCmd = 'R';
-  } else if (buttonState.F && !buttonState.B) {
-    nextCmd = 'F';
-  } else if (buttonState.B && !buttonState.F) {
-    nextCmd = 'B';
+  if (steering < 0) {
+    steering *= settings.leftSensitivity / 100;
+  } else if (steering > 0) {
+    steering *= settings.rightSensitivity / 100;
   }
 
-  if (nextCmd === activeCommand) return;
+  let left = throttle + steering;
+  let right = throttle - steering;
 
-  commandGeneration++;
-  activeCommand = nextCmd;
+  const peak = Math.max(1, Math.abs(left), Math.abs(right));
 
-  if (activeCommand === 'S') {
-    stopGeneration++;
+  left = left / peak * speed;
+  right = right / peak * speed;
+
+  return {
+    l:Math.round(left),
+    r:Math.round(right)
+  };
+}
+
+// ---------------- READ INPUTS ----------------------
+
+function getButtonAxes() {
+  const pressed = {
+    F:buttonState.F || keyboardState.F,
+    B:buttonState.B || keyboardState.B,
+    L:buttonState.L || keyboardState.L,
+    R:buttonState.R || keyboardState.R
+  };
+
+  const throttle =
+    (pressed.F === pressed.B) ? 0 : (pressed.F ? 1 : -1);
+
+  const steering =
+    (pressed.R === pressed.L) ? 0 : (pressed.R ? 1 : -1);
+
+  return { throttle, steering };
+}
+
+function getKeyboardAxes() {
+  const throttle =
+    keyboardState.F === keyboardState.B
+      ? 0 : (keyboardState.F ? 1 : -1);
+
+  const steering =
+    keyboardState.R === keyboardState.L
+      ? 0 : (keyboardState.R ? 1 : -1);
+
+  return { throttle, steering };
+}
+
+function getAxes() {
+  if (settings.layout === 'classic') {
+    return getButtonAxes();
+  }
+
+  const base = settings.layout === 'joystick'
+    ? {
+        throttle:-stickState.single.y,
+        steering:stickState.single.x
+      }
+    : {
+        throttle:-stickState.throttle.y,
+        steering:stickState.steering.x
+      };
+
+  const keys = getKeyboardAxes();
+
+  return {
+    throttle:Math.max(-1, Math.min(1, base.throttle + keys.throttle)),
+    steering:Math.max(-1, Math.min(1, base.steering + keys.steering))
+  };
+}
+
+// ---------------- CONTROL UPDATE -------------------
+
+function renderButtonStates() {
+  const pressed = {
+    F:buttonState.F || keyboardState.F,
+    B:buttonState.B || keyboardState.B,
+    L:buttonState.L || keyboardState.L,
+    R:buttonState.R || keyboardState.R
+  };
+
+  Object.keys(btnMap).forEach(k => {
+    btnMap[k].classList.toggle('active', pressed[k]);
+  });
+}
+
+function evaluateControls() {
+  renderButtonStates();
+
+  const axes = getAxes();
+  const output = normalizeAxes(axes.throttle, axes.steering);
+
+  sendDrive(output.l, output.r);
+
+  if (output.l === 0 && output.r === 0) {
     stopHeartbeat();
-    sendCommand('S');
   } else {
-    sendCommand(activeCommand);
     startHeartbeat();
   }
+
+  outputValue.textContent =
+    Math.max(Math.abs(output.l), Math.abs(output.r)) + ' / 255';
+}
+
+// ---------------- STOP ALL INPUTS ------------------
+
+function clearInputs() {
+  Object.keys(buttonState).forEach(k => buttonState[k] = false);
+  Object.keys(keyboardState).forEach(k => keyboardState[k] = false);
+
+  pointerActions.clear();
+
+  Object.keys(stickState).forEach(k => {
+    stickState[k].x = 0;
+    stickState[k].y = 0;
+  });
+
+  ['singleKnob', 'throttleKnob', 'steeringKnob'].forEach(id => {
+    const knob = $(id);
+
+    if (knob) {
+      knob.style.transform = 'translate(-50%,-50%)';
+    }
+  });
+
+  renderButtonStates();
 }
 
 function stopAll() {
   commandGeneration++;
-  stopGeneration++;
 
-  buttonState.F = false;
-  buttonState.B = false;
-  buttonState.L = false;
-  buttonState.R = false;
+  clearInputs();
+
   activeCommand = 'S';
+  lastDrive = { l:0, r:0 };
 
   stopHeartbeat();
-  ['F', 'B', 'L', 'R'].forEach(key => {
-    btnMap[key].classList.remove('active');
-  });
 
-  sendCommand('S');
+  driveState.textContent = 'STOPPED';
+  outputValue.textContent = '0 / 255';
+
+  // Send zero output after any in-flight request.
+  sendDrive(0, 0, true);
 }
 
-// Independent per-button multi-touch listeners
-['F', 'B', 'L', 'R'].forEach(dir => {
-  const btn = btnMap[dir];
+// ---------------- SLIDE BETWEEN BUTTONS ------------
 
-  const handleTouch = event => {
-    event.preventDefault();
-    buttonState[dir] = event.targetTouches.length > 0;
-    evaluateButtons();
-  };
+function buttonUnderPointer(event) {
+  const element = document.elementFromPoint(
+    event.clientX,
+    event.clientY
+  );
 
-  btn.addEventListener('touchstart', handleTouch, { passive: false });
-  btn.addEventListener('touchend', handleTouch, { passive: false });
-  btn.addEventListener('touchcancel', handleTouch, { passive: false });
+  const button =
+    element && element.closest
+      ? element.closest('[data-c]')
+      : null;
 
-  // Desktop mouse support
-  btn.addEventListener('mousedown', event => {
-    event.preventDefault();
-    buttonState[dir] = true;
-    evaluateButtons();
-  });
+  return button && button.isConnected
+    ? button.dataset.c
+    : null;
+}
 
-  btn.addEventListener('mouseup', () => {
-    if (buttonState[dir]) {
-      buttonState[dir] = false;
-      evaluateButtons();
+function recomputePointerButtons() {
+  Object.keys(buttonState).forEach(k => buttonState[k] = false);
+
+  for (const action of pointerActions.values()) {
+    if (action.type === 'button' && action.dir) {
+      buttonState[action.dir] = true;
     }
+  }
+}
+
+function setPointerButton(pointerId, dir) {
+  const old = pointerActions.get(pointerId);
+
+  if (old && old.type === 'button' && old.dir === dir) {
+    return;
+  }
+
+  // Continue tracking the finger through gaps between buttons.
+  // The finger must not lift before it can activate another button.
+  pointerActions.set(pointerId, {
+    type:'button',
+    dir:dir || null
   });
 
-  btn.addEventListener('mouseleave', () => {
-    if (buttonState[dir]) {
-      buttonState[dir] = false;
-      evaluateButtons();
-    }
+  recomputePointerButtons();
+  evaluateControls();
+}
+
+// Pointer events support both touchscreens and mouse input.
+Object.values(btnMap).forEach(btn => {
+  btn.addEventListener('pointerdown', event => {
+    event.preventDefault();
+
+    try {
+      btn.setPointerCapture(event.pointerId);
+    } catch (_e) {}
+
+    setPointerButton(event.pointerId, btn.dataset.c);
   });
 
-  btn.addEventListener('contextmenu', event => event.preventDefault());
+  btn.addEventListener('contextmenu', event => {
+    event.preventDefault();
+  });
 });
 
-// Safety check: if all fingers leave the screen, make sure everything stops
-window.addEventListener('touchend', event => {
-  if (event.touches && event.touches.length === 0 && activeCommand !== 'S') {
-    stopAll();
+document.addEventListener('pointermove', event => {
+  const action = pointerActions.get(event.pointerId);
+
+  if (!action) return;
+
+  if (action.type === 'button') {
+    const next = buttonUnderPointer(event);
+
+    if (next !== action.dir) {
+      setPointerButton(event.pointerId, next);
+    }
+  } else if (action.type === 'stick') {
+    updateStickFromPointer(
+      action.stick,
+      event.clientX,
+      event.clientY
+    );
   }
 });
 
-// Keyboard support (Hold W/Up + A/Left or D/Right at the same time)
+function releasePointer(event) {
+  const action = pointerActions.get(event.pointerId);
+
+  if (!action) return;
+
+  pointerActions.delete(event.pointerId);
+
+  recomputePointerButtons();
+
+  if (action.type === 'stick') {
+    stickState[action.stick].x = 0;
+    stickState[action.stick].y = 0;
+
+    renderStick(action.stick);
+  }
+
+  evaluateControls();
+}
+
+document.addEventListener('pointerup', releasePointer);
+document.addEventListener('pointercancel', releasePointer);
+
+// ---------------- VIRTUAL JOYSTICKS ----------------
+
+function renderStick(name) {
+  const ids = {
+    single:'singleKnob',
+    throttle:'throttleKnob',
+    steering:'steeringKnob'
+  };
+
+  const knob = $(ids[name]);
+
+  if (!knob) return;
+
+  const state = stickState[name];
+  const pad = knob.parentElement;
+
+  const maxX = pad.clientWidth * 0.32;
+  const maxY = pad.clientHeight * 0.32;
+
+  knob.style.transform =
+    'translate(calc(-50% + ' + (state.x * maxX) +
+    'px), calc(-50% + ' + (state.y * maxY) + 'px))';
+}
+
+function updateStickFromPointer(name, x, y) {
+  const pad = $({
+    single:'singlePad',
+    throttle:'throttlePad',
+    steering:'steeringPad'
+  }[name]);
+
+  const rect = pad.getBoundingClientRect();
+
+  let nx =
+    (x - (rect.left + rect.width / 2)) /
+    (rect.width * 0.34);
+
+  let ny =
+    (y - (rect.top + rect.height / 2)) /
+    (rect.height * 0.34);
+
+  nx = Math.max(-1, Math.min(1, nx));
+  ny = Math.max(-1, Math.min(1, ny));
+
+  if (name === 'throttle') nx = 0;
+  if (name === 'steering') ny = 0;
+
+  stickState[name] = { x:nx, y:ny };
+
+  renderStick(name);
+  evaluateControls();
+}
+
+['singlePad', 'throttlePad', 'steeringPad'].forEach(id => {
+  const pad = $(id);
+
+  if (!pad) return;
+
+  pad.addEventListener('pointerdown', event => {
+    event.preventDefault();
+
+    const name = pad.dataset.stick;
+
+    try {
+      pad.setPointerCapture(event.pointerId);
+    } catch (_e) {}
+
+    pointerActions.set(event.pointerId, {
+      type:'stick',
+      stick:name
+    });
+
+    updateStickFromPointer(
+      name,
+      event.clientX,
+      event.clientY
+    );
+  });
+});
+
+// ---------------- KEYBOARD CONTROLS ----------------
+
 const keyToDir = {
-  ArrowUp: 'F', KeyW: 'F',
-  ArrowDown: 'B', KeyS: 'B',
-  ArrowLeft: 'L', KeyA: 'L',
-  ArrowRight: 'R', KeyD: 'R'
+  ArrowUp:'F',
+  KeyW:'F',
+  ArrowDown:'B',
+  KeyS:'B',
+  ArrowLeft:'L',
+  KeyA:'L',
+  ArrowRight:'R',
+  KeyD:'R'
 };
 
 window.addEventListener('keydown', event => {
@@ -840,32 +1761,43 @@ window.addEventListener('keydown', event => {
     stopAll();
     return;
   }
+
   const dir = keyToDir[event.code];
-  if (dir && !buttonState[dir]) {
+
+  if (dir && !keyboardState[dir]) {
     event.preventDefault();
-    buttonState[dir] = true;
-    evaluateButtons();
+    keyboardState[dir] = true;
+    evaluateControls();
   }
 });
 
 window.addEventListener('keyup', event => {
   const dir = keyToDir[event.code];
-  if (dir && buttonState[dir]) {
+
+  if (dir && keyboardState[dir]) {
     event.preventDefault();
-    buttonState[dir] = false;
-    evaluateButtons();
+    keyboardState[dir] = false;
+    evaluateControls();
   }
 });
 
-document.getElementById('stopButton').addEventListener('touchstart', event => {
+// ---------------- STOP BUTTON ----------------------
+
+$('stopButton').addEventListener('pointerdown', event => {
   event.preventDefault();
   stopAll();
-}, { passive: false });
+});
 
-document.getElementById('stopButton').addEventListener('click', stopAll);
+$('stopButton').addEventListener('click', event => {
+  event.preventDefault();
+  stopAll();
+});
+
+// ---------------- SPEED CONTROL --------------------
 
 function updateSpeed(value) {
-  speed = Math.max(0, Math.min(255, Number(value)));
+  speed = Math.max(0, Math.min(255, Number(value) || 0));
+
   speedValue.textContent = speed;
 
   document.querySelectorAll('[data-speed]').forEach(button => {
@@ -875,12 +1807,28 @@ function updateSpeed(value) {
     );
   });
 
-  if (speedTimer !== null) clearTimeout(speedTimer);
+  if (speedTimer !== null) {
+    clearTimeout(speedTimer);
+  }
 
   speedTimer = setTimeout(() => {
-    sendSpeed(speed);
+    const gen = commandGeneration;
+
+    enqueueRequest('/speed?v=' + speed, gen, false)
+      .then(response => {
+        if (response && gen === commandGeneration) {
+          setStatus('online', 'CONNECTED');
+        }
+      })
+      .catch(() => {
+        if (gen === commandGeneration) {
+          setStatus('error', 'SPEED ERROR');
+        }
+      });
+
+    evaluateControls();
     speedTimer = null;
-  }, 60);
+  }, 80);
 }
 
 slider.addEventListener('input', event => {
@@ -894,22 +1842,195 @@ document.querySelectorAll('[data-speed]').forEach(button => {
   });
 });
 
-// Stop if the browser tab loses focus.
+// ---------------- SETTINGS STORAGE -----------------
+
+function saveSettings() {
+  try {
+    localStorage.setItem(
+      'roboracer-settings-v2',
+      JSON.stringify(settings)
+    );
+  } catch (_e) {}
+}
+
+function loadSettings() {
+  try {
+    const raw = localStorage.getItem('roboracer-settings-v2');
+
+    if (raw) {
+      const parsed = JSON.parse(raw);
+
+      if (parsed && ['classic', 'joystick', 'dual'].includes(parsed.layout)) {
+        settings.layout = parsed.layout;
+        settings.leftSensitivity =
+          clampSensitivity(parsed.leftSensitivity);
+        settings.rightSensitivity =
+          clampSensitivity(parsed.rightSensitivity);
+      }
+    }
+  } catch (_e) {
+    settings = { ...DEFAULT_SETTINGS };
+  }
+}
+
+function clampSensitivity(value) {
+  const n = Number(value);
+
+  return Number.isFinite(n)
+    ? Math.max(25, Math.min(150, Math.round(n / 5) * 5))
+    : 100;
+}
+
+// ---------------- RENDER SETTINGS ------------------
+
+function renderSettings() {
+  document.querySelectorAll('input[name="controlLayout"]').forEach(input => {
+    input.checked = input.value === settings.layout;
+  });
+
+  $('leftSensitivity').value = settings.leftSensitivity;
+  $('rightSensitivity').value = settings.rightSensitivity;
+
+  $('leftSensitivityValue').textContent =
+    settings.leftSensitivity + '%';
+
+  $('rightSensitivityValue').textContent =
+    settings.rightSensitivity + '%';
+
+  sensitivitySummary.textContent =
+    'STEERING L ' + settings.leftSensitivity +
+    '% · R ' + settings.rightSensitivity + '%';
+
+  $('classicControls').classList.toggle(
+    'layout-hidden',
+    settings.layout !== 'classic'
+  );
+
+  $('singleJoystickLayout').classList.toggle(
+    'visible',
+    settings.layout === 'joystick'
+  );
+
+  $('dualJoystickLayout').classList.toggle(
+    'visible',
+    settings.layout === 'dual'
+  );
+
+  currentLayoutLabel.textContent = ({
+    classic:'ARROWS',
+    joystick:'JOYSTICK',
+    dual:'DUAL STICK'
+  })[settings.layout];
+
+  if (settings.layout !== 'classic') {
+    Object.keys(buttonState).forEach(k => {
+      buttonState[k] = false;
+    });
+
+    Object.keys(stickState).forEach(k => {
+      stickState[k].x = 0;
+      stickState[k].y = 0;
+    });
+
+    ['singleKnob', 'throttleKnob', 'steeringKnob'].forEach(id => {
+      const knob = $(id);
+
+      if (knob) {
+        knob.style.transform = 'translate(-50%,-50%)';
+      }
+    });
+
+    renderButtonStates();
+  }
+}
+
+function openSettings() {
+  stopAll();
+  renderSettings();
+  $('settingsBackdrop').classList.add('open');
+}
+
+function closeSettings() {
+  $('settingsBackdrop').classList.remove('open');
+}
+
+$('settingsButton').addEventListener('click', openSettings);
+$('closeSettings').addEventListener('click', closeSettings);
+$('doneSettings').addEventListener('click', closeSettings);
+
+$('settingsBackdrop').addEventListener('click', event => {
+  if (event.target === $('settingsBackdrop')) {
+    closeSettings();
+  }
+});
+
+document.addEventListener('keydown', event => {
+  if (
+    event.key === 'Escape' &&
+    $('settingsBackdrop').classList.contains('open')
+  ) {
+    closeSettings();
+  }
+});
+
+document.querySelectorAll('input[name="controlLayout"]').forEach(input => {
+  input.addEventListener('change', () => {
+    stopAll();
+
+    settings.layout = input.value;
+
+    saveSettings();
+    renderSettings();
+  });
+});
+
+$('leftSensitivity').addEventListener('input', event => {
+  settings.leftSensitivity = clampSensitivity(event.target.value);
+  renderSettings();
+  saveSettings();
+});
+
+$('rightSensitivity').addEventListener('input', event => {
+  settings.rightSensitivity = clampSensitivity(event.target.value);
+  renderSettings();
+  saveSettings();
+});
+
+$('resetSettings').addEventListener('click', () => {
+  stopAll();
+
+  settings = { ...DEFAULT_SETTINGS };
+
+  saveSettings();
+  renderSettings();
+});
+
+// ---------------- FAILSAFE EVENTS ------------------
+
 window.addEventListener('blur', stopAll);
 
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden) stopAll();
+  if (document.hidden) {
+    stopAll();
+  }
 });
 
 window.addEventListener('pagehide', stopAll);
 
+// ---------------- INITIALIZE -----------------------
+
+loadSettings();
+renderSettings();
 setStatus('', 'READY');
 </script>
 </body>
 </html>
 )rawliteral";
 
-// ---------------- SETUP ---------------------------
+// ==================================================
+// ESP8266 SETUP
+// ==================================================
+
 void setup() {
   Serial.begin(115200);
 
@@ -951,6 +2072,7 @@ void setup() {
 
   server.on("/cmd", HTTP_GET, handleCommand);
   server.on("/speed", HTTP_GET, handleSpeed);
+  server.on("/drive", HTTP_GET, handleDrive);
 
   server.onNotFound([]() {
     server.send(404, "text/plain", "Not found");
@@ -963,7 +2085,10 @@ void setup() {
   Serial.println("RoboRacer web server ready");
 }
 
-// ---------------- MAIN LOOP ------------------------
+// ==================================================
+// MAIN LOOP
+// ==================================================
+
 void loop() {
   server.handleClient();
 
