@@ -1,73 +1,41 @@
-
-/*
-  OLL RoboRacer - ESP32 Wi-Fi RC Car
-  Two BTS7960 / IBT-2 motor drivers
-  Board: ESP32 DevKit V1 / ESP32-WROOM-32
-  Arduino-ESP32 core: 2.x or 3.x
-
-  Wi-Fi:
-    SSID: IIT_KANPUR_ROBO_RACER
-    Password: roboracer121321
-    URL: http://192.168.4.1
-
-  LATEST PIN MAPPING
-    LEFT DRIVER:
-      RPWM -> GPIO25
-      LPWM -> GPIO26
-      R_EN -> GPIO32
-      L_EN -> GPIO33
-
-    RIGHT DRIVER:
-      RPWM -> GPIO27
-      LPWM -> GPIO14
-      R_EN -> GPIO18
-      L_EN -> GPIO19
-
-  IMPORTANT:
-    ESP32 GND, both driver logic grounds, and battery negative
-    must share a common ground.
-
-    Connect motor battery power only to the driver's motor
-    power terminals. Verify the logic VCC requirements of
-    your actual BTS7960 module before connecting it.
-*/
-
+#include <Arduino.h>
 #include <WiFi.h>
 #include <WebServer.h>
+#include <esp_arduino_version.h>
 
-// ---------------- Wi-Fi settings ----------------
+// ---------------- Wi-Fi ----------------
 
 const char* AP_SSID = "IIT_KANPUR_ROBO_RACER";
 const char* AP_PASSWORD = "roboracer121321";
 
-// ---------------- LEFT BTS7960 ------------------
+// ---------------- Left driver ----------------
 
 #define L_RPWM 25
 #define L_LPWM 26
 #define L_R_EN 32
 #define L_L_EN 33
 
-// ---------------- RIGHT BTS7960 -----------------
+// ---------------- Right driver ----------------
 
 #define R_RPWM 27
 #define R_LPWM 14
 #define R_R_EN 18
 #define R_L_EN 19
 
-// Change to true if that motor's direction is reversed.
+// Set true if a motor runs in the opposite direction.
 const bool INVERT_LEFT = false;
 const bool INVERT_RIGHT = false;
 
-// ---------------- PWM settings ------------------
+// ---------------- PWM ----------------
 
-const int PWM_FREQ = 5000;
-const int PWM_RES = 8;
+const uint32_t PWM_FREQ = 5000;
+const uint8_t PWM_RES = 8;
 
-// ---------------- Safety settings ----------------
+// ---------------- Safety ----------------
 
 const unsigned long COMMAND_TIMEOUT_MS = 1200;
 
-// ---------------- State --------------------------
+// ---------------- State ----------------
 
 WebServer server(80);
 
@@ -77,8 +45,6 @@ unsigned long lastCommandTime = 0;
 
 bool motorsReady = false;
 
-// ---------------- PWM pin array -----------------
-
 const int PWM_PINS[4] = {
   L_RPWM, L_LPWM, R_RPWM, R_LPWM
 };
@@ -87,13 +53,11 @@ const int EN_PINS[4] = {
   L_R_EN, L_L_EN, R_R_EN, R_L_EN
 };
 
-bool pwmReady[4] = {
-  false, false, false, false
-};
+bool pwmReady[4] = {false, false, false, false};
 
-// ---------------- HTML controller ----------------
-// Original controller layout and features retained.
-// JavaScript request handling is improved below.
+// =====================================================
+// WEBPAGE
+// =====================================================
 
 const char INDEX_HTML[] PROGMEM = R"rawliteral(
 <!DOCTYPE html>
@@ -528,7 +492,6 @@ let pointerId = null;
 let heartbeat = null;
 let speedTimer = null;
 let speed = 170;
-let stopped = true;
 let requestChain = Promise.resolve();
 let pending = 0;
 let commandGeneration = 0;
@@ -541,14 +504,14 @@ function setStatus(state, text) {
   statusText.textContent = text;
 }
 
-// Serialize control requests so older movement commands cannot
-// overtake STOP. Every individual request has a timeout.
+// Queue HTTP requests in order. This prevents an older movement
+// request from being processed after a later STOP request.
 function enqueueRequest(path) {
   pending++;
 
   const task = requestChain.then(async () => {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 1000);
+    const timeout = setTimeout(() => controller.abort(), 1500);
 
     try {
       const response = await fetch(path, {
@@ -557,7 +520,11 @@ function enqueueRequest(path) {
         signal: controller.signal
       });
 
-      if (!response.ok) throw new Error('HTTP ' + response.status);
+      if (!response.ok) {
+        const body = await response.text();
+        throw new Error('HTTP ' + response.status + ': ' + body);
+      }
+
       return response;
     } finally {
       clearTimeout(timeout);
@@ -575,47 +542,33 @@ function enqueueRequest(path) {
 
 function sendCommand(command) {
   const generation = commandGeneration;
-  const thisStopGeneration = stopGeneration;
+  const stopGen = stopGeneration;
 
-  enqueueRequest('/cmd?c=' + command)
+  enqueueRequest('/cmd?c=' + encodeURIComponent(command))
     .then(() => {
       if (generation === commandGeneration &&
-          thisStopGeneration === stopGeneration) {
+          stopGen === stopGeneration) {
         setStatus('online', 'CONNECTED');
       }
     })
-    .catch(() => {
+    .catch(error => {
+      console.error('Command request failed:', error);
       if (generation === commandGeneration &&
-          thisStopGeneration === stopGeneration) {
-        setStatus('error', 'CONNECTION ERROR');
+          stopGen === stopGeneration) {
+        setStatus('error', 'COMMAND ERROR');
       }
     });
 }
 
 function sendSpeed(value) {
-  const generation = commandGeneration;
-
-  enqueueRequest('/speed?v=' + value)
+  enqueueRequest('/speed?v=' + encodeURIComponent(value))
     .then(() => {
-      if (generation === commandGeneration) {
-        setStatus('online', 'CONNECTED');
-      }
+      setStatus('online', 'CONNECTED');
     })
-    .catch(() => {
-      if (generation === commandGeneration) {
-        setStatus('error', 'SPEED ERROR');
-      }
+    .catch(error => {
+      console.error('Speed request failed:', error);
+      setStatus('error', 'SPEED ERROR');
     });
-}
-
-function startHeartbeat() {
-  stopHeartbeat();
-
-  heartbeat = setInterval(() => {
-    if (held !== null && !stopped && pending === 0) {
-      sendCommand(held);
-    }
-  }, 250);
 }
 
 function stopHeartbeat() {
@@ -623,6 +576,16 @@ function stopHeartbeat() {
     clearInterval(heartbeat);
     heartbeat = null;
   }
+}
+
+function startHeartbeat() {
+  stopHeartbeat();
+
+  heartbeat = setInterval(() => {
+    if (held !== null) {
+      sendCommand(held);
+    }
+  }, 250);
 }
 
 function clearArrowHighlights() {
@@ -637,30 +600,31 @@ function stopAll() {
 
   held = null;
   pointerId = null;
-  stopped = true;
 
   stopHeartbeat();
   clearArrowHighlights();
 
-  // STOP follows already queued control requests.
+  // Queued STOP will be processed after any request already in flight.
   sendCommand('S');
 }
 
 document.querySelectorAll('[data-c]').forEach(button => {
   button.addEventListener('pointerdown', event => {
     event.preventDefault();
+
     if (held !== null) return;
 
     commandGeneration++;
     held = button.dataset.c;
     pointerId = event.pointerId;
-    stopped = false;
 
     button.classList.add('active');
 
     try {
       button.setPointerCapture(event.pointerId);
-    } catch (_) {}
+    } catch (error) {
+      console.warn('Pointer capture unavailable:', error);
+    }
 
     sendCommand(held);
     startHeartbeat();
@@ -689,20 +653,20 @@ window.addEventListener('pointercancel', event => {
   if (pointerId !== null && event.pointerId === pointerId) stopAll();
 });
 
+document.getElementById('stopButton').addEventListener('click', stopAll);
+
 document.getElementById('stopButton').addEventListener(
-  'pointerdown', event => {
-    event.preventDefault();
-    stopAll();
-  }
+  'pointerdown', event => event.preventDefault()
 );
 
 function updateSpeed(value) {
   speed = Math.max(0, Math.min(255, Number(value)));
-  speedValue.textContent = speed;
+  speedValue.textContent = String(speed);
 
   document.querySelectorAll('[data-speed]').forEach(button => {
     button.classList.toggle(
-      'selected', Number(button.dataset.speed) === speed
+      'selected',
+      Number(button.dataset.speed) === speed
     );
   });
 
@@ -711,7 +675,7 @@ function updateSpeed(value) {
   speedTimer = setTimeout(() => {
     sendSpeed(speed);
     speedTimer = null;
-  }, 60);
+  }, 100);
 }
 
 slider.addEventListener('input', event => {
@@ -737,7 +701,7 @@ function pingRobot() {
   if (held !== null || pending !== 0) return;
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 1000);
+  const timeout = setTimeout(() => controller.abort(), 1500);
 
   fetch('/ping', {
     cache: 'no-store',
@@ -747,30 +711,42 @@ function pingRobot() {
       if (!response.ok) throw new Error('HTTP ' + response.status);
       if (held === null) setStatus('online', 'CONNECTED');
     })
-    .catch(() => {
+    .catch(error => {
+      console.error('Ping failed:', error);
       if (held === null) setStatus('error', 'CONNECTION ERROR');
     })
     .finally(() => clearTimeout(timeout));
 }
 
 setInterval(pingRobot, 3000);
+
+// Send initial slider value to the ESP32.
 sendSpeed(speed);
 </script>
 </body>
 </html>
 )rawliteral";
 
-// ---------------- PWM initialization ----------------
+// =====================================================
+// PWM INITIALIZATION
+// =====================================================
 
 bool setupPwmPin(int index) {
-#if defined(ESP_ARDUINO_VERSION_MAJOR) && \
-    (ESP_ARDUINO_VERSION_MAJOR >= 3)
+#if ESP_ARDUINO_VERSION_MAJOR >= 3
 
-  pwmReady[index] = ledcAttach(PWM_PINS[index], PWM_FREQ, PWM_RES);
+  pwmReady[index] = ledcAttach(
+    PWM_PINS[index],
+    PWM_FREQ,
+    PWM_RES
+  );
 
 #else
 
-  double actualFrequency = ledcSetup(index, PWM_FREQ, PWM_RES);
+  double actualFrequency = ledcSetup(
+    index,
+    PWM_FREQ,
+    PWM_RES
+  );
 
   if (actualFrequency > 0) {
     ledcAttachPin(PWM_PINS[index], index);
@@ -781,10 +757,10 @@ bool setupPwmPin(int index) {
 
 #endif
 
-  if (!pwmReady[index]) {
-    Serial.print("PWM initialization failed on GPIO ");
-    Serial.println(PWM_PINS[index]);
-  }
+  Serial.print("[PWM] GPIO ");
+  Serial.print(PWM_PINS[index]);
+  Serial.print(": ");
+  Serial.println(pwmReady[index] ? "READY" : "FAILED");
 
   return pwmReady[index];
 }
@@ -796,29 +772,31 @@ void writePwm(int pin, int duty) {
     if (PWM_PINS[i] != pin) continue;
     if (!pwmReady[i]) return;
 
-#if defined(ESP_ARDUINO_VERSION_MAJOR) && \
-    (ESP_ARDUINO_VERSION_MAJOR >= 3)
+#if ESP_ARDUINO_VERSION_MAJOR >= 3
 
-    ledcWrite(pin, duty);
+    ledcWrite(pin, (uint32_t)duty);
 
 #else
 
-    ledcWrite(i, duty);
+    ledcWrite(i, (uint32_t)duty);
 
 #endif
+
     return;
   }
 }
 
-// ---------------- Motor control ----------------
+// =====================================================
+// MOTOR CONTROL
+// =====================================================
 
-// power: -255 to +255
-// Positive = RPWM; negative = LPWM.
+// Positive power uses RPWM; negative power uses LPWM.
 void driveMotor(int rpwm, int lpwm, int power, bool invert) {
   if (invert) power = -power;
 
   power = constrain(power, -255, 255);
 
+  // Never drive both direction inputs at the same time.
   if (power > 0) {
     writePwm(lpwm, 0);
     writePwm(rpwm, power);
@@ -832,7 +810,6 @@ void driveMotor(int rpwm, int lpwm, int power, bool invert) {
 }
 
 void stopMotors() {
-  // Disable PWM outputs first.
   for (int i = 0; i < 4; i++) {
     writePwm(PWM_PINS[i], 0);
   }
@@ -841,7 +818,10 @@ void stopMotors() {
 }
 
 void applyMovement(char dir, int motorSpeed) {
-  if (!motorsReady) return;
+  if (!motorsReady) {
+    Serial.println("[MOTOR ERROR] PWM is not ready");
+    return;
+  }
 
   int leftPower = 0;
   int rightPower = 0;
@@ -878,17 +858,27 @@ void applyMovement(char dir, int motorSpeed) {
   currentDir = dir;
 }
 
-// ---------------- Motor initialization ----------------
+// =====================================================
+// MOTOR INITIALIZATION
+// =====================================================
 
 void initMotors() {
-  // Keep both drivers disabled during initialization.
   motorsReady = false;
 
+  // 1. PWM pins LOW first (motors idle) so nothing moves
+  //    when the drivers are enabled.
   for (int i = 0; i < 4; i++) {
-    pinMode(EN_PINS[i], OUTPUT);
-    digitalWrite(EN_PINS[i], LOW);
+    pinMode(PWM_PINS[i], OUTPUT);
+    digitalWrite(PWM_PINS[i], LOW);
   }
 
+  // 2. All four enable pins HIGH immediately.
+  for (int i = 0; i < 4; i++) {
+    pinMode(EN_PINS[i], OUTPUT);
+    digitalWrite(EN_PINS[i], HIGH);
+  }
+
+  // 3. Attach PWM to the four signal pins.
   bool allReady = true;
 
   for (int i = 0; i < 4; i++) {
@@ -897,28 +887,30 @@ void initMotors() {
     }
   }
 
+  // If PWM failed, shut the drivers off for safety.
   if (!allReady) {
-    Serial.println("ERROR: PWM setup failed.");
-    Serial.println("Motor drivers remain disabled.");
+    Serial.println("[FATAL] PWM setup failed. Forcing EN pins LOW.");
+    for (int i = 0; i < 4; i++) {
+      digitalWrite(EN_PINS[i], LOW);
+    }
     return;
   }
 
+  // 4. Make sure every PWM output starts at 0 duty.
   for (int i = 0; i < 4; i++) {
     writePwm(PWM_PINS[i], 0);
-  }
-
-  // Enable only after all PWM outputs have initialized.
-  for (int i = 0; i < 4; i++) {
-    digitalWrite(EN_PINS[i], HIGH);
   }
 
   motorsReady = true;
   currentDir = 'S';
 
-  Serial.println("Motor PWM initialized successfully.");
+  Serial.println("[OK] Motor PWM initialized.");
+  Serial.println("[OK] All 4 EN pins (32, 33, 18, 19) are HIGH.");
 }
 
-// ---------------- HTTP helpers ----------------
+// =====================================================
+// HTTP HELPERS
+// =====================================================
 
 void sendText(int code, const char* message) {
   server.sendHeader("Cache-Control", "no-store");
@@ -938,19 +930,27 @@ bool parseIntStrict(const String& value, int& result) {
   return true;
 }
 
-// ---------------- HTTP handlers ----------------
+// =====================================================
+// HTTP HANDLERS
+// =====================================================
 
 void handleRoot() {
+  Serial.println("[HTTP] GET /");
   server.sendHeader("Cache-Control", "no-store");
   server.send(200, "text/html", INDEX_HTML);
 }
 
 void handlePing() {
+  Serial.println("[HTTP] GET /ping");
   sendText(200, "OK");
 }
 
 void handleCmd() {
+  Serial.print("[HTTP] Command request: ");
+  Serial.println(server.uri());
+
   if (!server.hasArg("c")) {
+    Serial.println("[ERROR] Missing c parameter");
     sendText(400, "Missing c parameter");
     return;
   }
@@ -958,26 +958,34 @@ void handleCmd() {
   String value = server.arg("c");
 
   if (value.length() != 1) {
+    Serial.println("[ERROR] Invalid command length");
     sendText(400, "Invalid command");
     return;
   }
 
   char cmd = value[0];
 
+  Serial.print("[CMD] Received: ");
+  Serial.println(cmd);
+
   if (cmd == 'S') {
     stopMotors();
     lastCommandTime = millis();
+
+    Serial.println("[MOTOR] STOP requested");
     sendText(200, "OK");
     return;
   }
 
   if (cmd != 'F' && cmd != 'B' &&
       cmd != 'L' && cmd != 'R') {
+    Serial.println("[ERROR] Unknown command");
     sendText(400, "Use F, B, L, R or S");
     return;
   }
 
   if (!motorsReady) {
+    Serial.println("[ERROR] PWM not ready");
     sendText(503, "Motor PWM is not ready");
     return;
   }
@@ -985,11 +993,20 @@ void handleCmd() {
   applyMovement(cmd, currentSpeed);
   lastCommandTime = millis();
 
+  Serial.print("[MOTOR] Direction: ");
+  Serial.print(currentDir);
+  Serial.print(" | Speed: ");
+  Serial.println(currentSpeed);
+
   sendText(200, "OK");
 }
 
 void handleSpeed() {
+  Serial.print("[HTTP] Speed request: ");
+  Serial.println(server.uri());
+
   if (!server.hasArg("v")) {
+    Serial.println("[ERROR] Missing v parameter");
     sendText(400, "Missing v parameter");
     return;
   }
@@ -998,15 +1015,20 @@ void handleSpeed() {
 
   if (!parseIntStrict(server.arg("v"), newSpeed) ||
       newSpeed < 0 || newSpeed > 255) {
+    Serial.println("[ERROR] Speed must be 0-255");
     sendText(400, "Speed must be 0-255");
     return;
   }
 
   currentSpeed = newSpeed;
 
-  // Update the motor PWM immediately while driving.
+  Serial.print("[SPEED] Updated to: ");
+  Serial.println(currentSpeed);
+
+  // If currently moving, immediately apply the new speed.
   if (currentDir != 'S') {
     if (!motorsReady) {
+      Serial.println("[ERROR] PWM not ready for speed update");
       sendText(503, "Motor PWM is not ready");
       return;
     }
@@ -1019,59 +1041,69 @@ void handleSpeed() {
 }
 
 void handleNotFound() {
+  Serial.print("[HTTP 404] Unknown path: ");
+  Serial.println(server.uri());
   sendText(404, "Not found");
 }
 
-// ---------------- Setup ----------------
+// =====================================================
+// SETUP
+// =====================================================
 
 void setup() {
   Serial.begin(115200);
-  delay(300);
+  delay(500);
 
   Serial.println();
-  Serial.println("=== OLL RoboRacer ===");
+  Serial.println("================================");
+  Serial.println("       OLL RoboRacer");
+  Serial.println("================================");
+
+  Serial.print("[INFO] ESP32 Arduino core major: ");
+  Serial.println(ESP_ARDUINO_VERSION_MAJOR);
 
   initMotors();
 
   WiFi.mode(WIFI_AP);
+  WiFi.setSleep(false);
 
   bool apStarted = WiFi.softAP(AP_SSID, AP_PASSWORD);
 
   if (apStarted) {
-    Serial.println("Wi-Fi access point started.");
-    Serial.print("SSID: ");
+    Serial.println("[OK] Wi-Fi access point started");
+    Serial.print("[WiFi] SSID: ");
     Serial.println(AP_SSID);
-    Serial.print("IP address: ");
+    Serial.print("[WiFi] IP: ");
     Serial.println(WiFi.softAPIP());
   } else {
-    Serial.println("ERROR: Wi-Fi access point failed.");
+    Serial.println("[ERROR] Wi-Fi access point failed");
   }
 
   server.on("/", HTTP_GET, handleRoot);
   server.on("/ping", HTTP_GET, handlePing);
   server.on("/cmd", HTTP_GET, handleCmd);
   server.on("/speed", HTTP_GET, handleSpeed);
-
   server.onNotFound(handleNotFound);
+
   server.begin();
 
-  Serial.println("HTTP server started on port 80.");
-  Serial.println("Connect to the robot Wi-Fi and open:");
-  Serial.println("http://192.168.4.1");
+  Serial.println("[OK] HTTP server started on port 80");
+  Serial.println("[INFO] Open http://192.168.4.1");
+  Serial.println("[INFO] Ready for controller requests");
 }
 
-// ---------------- Main loop ----------------
+// =====================================================
+// MAIN LOOP
+// =====================================================
 
 void loop() {
   server.handleClient();
 
-  // Stop if movement commands stop arriving.
   if (motorsReady &&
       currentDir != 'S' &&
       millis() - lastCommandTime > COMMAND_TIMEOUT_MS) {
 
+    Serial.println("[SAFETY] Command timeout. Stopping motors.");
     stopMotors();
-
-    Serial.println("Safety stop: command timeout.");
   }
 }
